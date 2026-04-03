@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
   title: Rolay Server API
-  version: 0.1.0
+  version: 0.2.0
   description: >
-    HTTP contract for Rolay v1. This specification covers authentication,
-    workspace tree synchronization, blob tickets, and CRDT session bootstrap.
-    The Yjs-compatible realtime websocket protocol is described in docs/protocol.md.
+    HTTP contract for Rolay v1. The product model is room-based:
+    users have global roles, rooms have owner/member roles, and room trees
+    sync through snapshot + SSE + CRDT document sessions.
 servers:
   - url: https://rolay.example.com
     description: Production
@@ -14,8 +14,7 @@ servers:
 tags:
   - name: auth
   - name: admin
-  - name: workspaces
-  - name: invites
+  - name: rooms
   - name: tree
   - name: files
 paths:
@@ -98,6 +97,23 @@ paths:
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
   /v1/admin/users:
+    get:
+      tags: [admin]
+      summary: List all users
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
     post:
       tags: [admin]
       summary: Create managed user account
@@ -123,57 +139,72 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '409':
           $ref: '#/components/responses/ErrorConflict'
-  /v1/workspaces:
-    post:
-      tags: [workspaces]
-      summary: Create workspace
-      operationId: createWorkspace
+  /v1/admin/users/{userId}:
+    delete:
+      tags: [admin]
+      summary: Delete managed user
+      operationId: deleteManagedUser
       security:
         - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateWorkspaceRequest'
-      responses:
-        '201':
-          description: Workspace created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WorkspaceResponse'
-        '401':
-          $ref: '#/components/responses/ErrorUnauthorized'
-  /v1/invites/accept:
-    post:
-      tags: [invites]
-      summary: Accept workspace invite
-      operationId: acceptInvite
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AcceptInviteRequest'
+      parameters:
+        - $ref: '#/components/parameters/UserId'
       responses:
         '200':
-          description: Invite accepted
+          description: Deleted user
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WorkspaceResponse'
+                $ref: '#/components/schemas/ManagedUserResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
-  /v1/workspaces/{workspaceId}/invites:
+  /v1/admin/workspaces:
+    get:
+      tags: [admin]
+      summary: List all rooms
+      operationId: listAllRooms
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Room list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminRoomListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+  /v1/admin/workspaces/{workspaceId}/members:
+    get:
+      tags: [admin]
+      summary: List room members
+      operationId: listRoomMembersAsAdmin
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Room members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomMemberListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
     post:
-      tags: [invites]
-      summary: Create invite for workspace
-      operationId: createInvite
+      tags: [admin]
+      summary: Add user to room by username
+      operationId: addRoomMemberAsAdmin
       security:
         - bearerAuth: []
       parameters:
@@ -183,14 +214,308 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateInviteRequest'
+              $ref: '#/components/schemas/AddRoomMemberRequest'
       responses:
-        '201':
-          description: Invite created
+        '200':
+          description: Member added or updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InviteResponse'
+                $ref: '#/components/schemas/AddRoomMemberResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/admin/workspaces/{workspaceId}:
+    delete:
+      tags: [admin]
+      summary: Delete room
+      operationId: deleteRoomAsAdmin
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Room deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/rooms:
+    get:
+      tags: [rooms]
+      summary: List rooms for current user
+      operationId: listRooms
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User room list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+    post:
+      tags: [rooms]
+      summary: Create room
+      operationId: createRoom
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoomRequest'
+      responses:
+        '201':
+          description: Room created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+  /v1/workspaces:
+    get:
+      tags: [rooms]
+      summary: List rooms for current user (workspace alias)
+      operationId: listWorkspaces
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User room list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+    post:
+      tags: [rooms]
+      summary: Create room (workspace alias)
+      operationId: createWorkspace
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoomRequest'
+      responses:
+        '201':
+          description: Room created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+  /v1/rooms/join:
+    post:
+      tags: [rooms]
+      summary: Join room by invite key
+      operationId: joinRoom
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinRoomRequest'
+      responses:
+        '200':
+          description: Joined room
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/invites/accept:
+    post:
+      tags: [rooms]
+      summary: Join room by invite key (legacy alias)
+      operationId: acceptInvite
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinRoomRequest'
+      responses:
+        '200':
+          description: Joined room
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/rooms/{workspaceId}/invite:
+    get:
+      tags: [rooms]
+      summary: Get current room invite state
+      operationId: getRoomInvite
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Invite state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteStateResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    patch:
+      tags: [rooms]
+      summary: Enable or disable room invite key
+      operationId: updateRoomInviteState
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInviteStateRequest'
+      responses:
+        '200':
+          description: Updated invite state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteStateResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/invite:
+    get:
+      tags: [rooms]
+      summary: Get current room invite state (workspace alias)
+      operationId: getWorkspaceInvite
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Invite state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteStateResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    patch:
+      tags: [rooms]
+      summary: Enable or disable room invite key (workspace alias)
+      operationId: updateWorkspaceInviteState
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInviteStateRequest'
+      responses:
+        '200':
+          description: Updated invite state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteStateResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/rooms/{workspaceId}/invite/regenerate:
+    post:
+      tags: [rooms]
+      summary: Regenerate room invite key
+      operationId: regenerateRoomInvite
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Regenerated invite state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteStateResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/invite/regenerate:
+    post:
+      tags: [rooms]
+      summary: Regenerate room invite key (workspace alias)
+      operationId: regenerateWorkspaceInvite
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Regenerated invite state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteStateResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
@@ -200,7 +525,7 @@ paths:
   /v1/workspaces/{workspaceId}/tree:
     get:
       tags: [tree]
-      summary: Get workspace tree snapshot
+      summary: Get room tree snapshot
       operationId: getWorkspaceTree
       security:
         - bearerAuth: []
@@ -256,7 +581,7 @@ paths:
   /v1/workspaces/{workspaceId}/events:
     get:
       tags: [tree]
-      summary: Subscribe to workspace events
+      summary: Subscribe to room events
       operationId: streamWorkspaceEvents
       security:
         - bearerAuth: []
@@ -371,7 +696,14 @@ components:
       required: true
       schema:
         type: string
-      description: Workspace identifier.
+      description: Room identifier.
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Managed user identifier.
     EntryId:
       name: entryId
       in: path
@@ -444,6 +776,13 @@ components:
           type: string
         refreshToken:
           type: string
+    UpdateProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
     CreateManagedUserRequest:
       type: object
       additionalProperties: false
@@ -456,17 +795,21 @@ components:
           format: password
         displayName:
           type: string
-    UpdateProfileRequest:
-      type: object
-      additionalProperties: false
-      required: [displayName]
-      properties:
-        displayName:
-          type: string
+        globalRole:
+          $ref: '#/components/schemas/ManagedGlobalRole'
+    GlobalRole:
+      type: string
+      enum: [admin, writer, reader]
+    ManagedGlobalRole:
+      type: string
+      enum: [writer, reader]
+    WorkspaceRole:
+      type: string
+      enum: [owner, member]
     User:
       type: object
       additionalProperties: false
-      required: [id, username, displayName, isAdmin]
+      required: [id, username, displayName, isAdmin, globalRole]
       properties:
         id:
           type: string
@@ -476,6 +819,20 @@ components:
           type: string
         isAdmin:
           type: boolean
+        globalRole:
+          $ref: '#/components/schemas/GlobalRole'
+    ManagedUser:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          additionalProperties: false
+          properties:
+            createdAt:
+              type: string
+              format: date-time
+            disabledAt:
+              type: string
+              format: date-time
     UserResponse:
       type: object
       additionalProperties: false
@@ -483,14 +840,28 @@ components:
       properties:
         user:
           $ref: '#/components/schemas/User'
+    ManagedUserResponse:
+      type: object
+      additionalProperties: false
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/ManagedUser'
+    UserListResponse:
+      type: object
+      additionalProperties: false
+      required: [users]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManagedUser'
     Workspace:
       type: object
       additionalProperties: false
       required: [id, name]
       properties:
         id:
-          type: string
-        slug:
           type: string
         name:
           type: string
@@ -501,7 +872,7 @@ components:
       properties:
         workspace:
           $ref: '#/components/schemas/Workspace'
-    CreateWorkspaceRequest:
+    CreateRoomRequest:
       type: object
       additionalProperties: false
       required: [name]
@@ -511,56 +882,140 @@ components:
           minLength: 1
         slug:
           type: string
-    AcceptInviteRequest:
+          deprecated: true
+    RoomListItem:
+      type: object
+      additionalProperties: false
+      required: [workspace, membershipRole, createdAt, memberCount, inviteEnabled]
+      properties:
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+        membershipRole:
+          $ref: '#/components/schemas/WorkspaceRole'
+        createdAt:
+          type: string
+          format: date-time
+        memberCount:
+          type: integer
+          minimum: 0
+        inviteEnabled:
+          type: boolean
+    AdminRoomListItem:
+      allOf:
+        - $ref: '#/components/schemas/RoomListItem'
+        - type: object
+          additionalProperties: false
+          required: [ownerCount]
+          properties:
+            ownerCount:
+              type: integer
+              minimum: 0
+    RoomListResponse:
+      type: object
+      additionalProperties: false
+      required: [workspaces]
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoomListItem'
+    AdminRoomListResponse:
+      type: object
+      additionalProperties: false
+      required: [workspaces]
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminRoomListItem'
+    JoinRoomRequest:
       type: object
       additionalProperties: false
       required: [code]
       properties:
         code:
           type: string
-    CreateInviteRequest:
+    InviteState:
       type: object
       additionalProperties: false
+      required: [workspaceId, code, enabled, updatedAt]
       properties:
-        role:
+        workspaceId:
           type: string
-          enum: [editor, viewer]
-          default: editor
-        expiresAt:
+        code:
+          type: string
+        enabled:
+          type: boolean
+        updatedAt:
           type: string
           format: date-time
-        maxUses:
-          type: integer
-          minimum: 1
-      required: [role]
-    InviteResponse:
+    InviteStateResponse:
       type: object
       additionalProperties: false
       required: [invite]
       properties:
         invite:
-          $ref: '#/components/schemas/Invite'
-    Invite:
+          $ref: '#/components/schemas/InviteState'
+    UpdateInviteStateRequest:
       type: object
       additionalProperties: false
-      required: [id, workspaceId, code, role]
+      required: [enabled]
       properties:
-        id:
-          type: string
-        workspaceId:
-          type: string
-        code:
-          type: string
+        enabled:
+          type: boolean
+    RoomMember:
+      type: object
+      additionalProperties: false
+      required: [user, role, joinedAt]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
         role:
-          type: string
-          enum: [editor, viewer]
-        expiresAt:
+          $ref: '#/components/schemas/WorkspaceRole'
+        joinedAt:
           type: string
           format: date-time
-        maxUses:
-          type: integer
-        usedCount:
-          type: integer
+    RoomMemberListResponse:
+      type: object
+      additionalProperties: false
+      required: [members]
+      properties:
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoomMember'
+    Membership:
+      type: object
+      additionalProperties: false
+      required: [userId, role, joinedAt]
+      properties:
+        userId:
+          type: string
+        role:
+          $ref: '#/components/schemas/WorkspaceRole'
+        joinedAt:
+          type: string
+          format: date-time
+    AddRoomMemberRequest:
+      type: object
+      additionalProperties: false
+      required: [username]
+      properties:
+        username:
+          type: string
+        role:
+          $ref: '#/components/schemas/WorkspaceRole'
+    AddRoomMemberResponse:
+      type: object
+      additionalProperties: false
+      required: [workspace, user, membership]
+      properties:
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+        user:
+          $ref: '#/components/schemas/User'
+        membership:
+          $ref: '#/components/schemas/Membership'
     TreeSnapshotResponse:
       type: object
       additionalProperties: false
@@ -791,10 +1246,15 @@ components:
             - unauthorized
             - forbidden
             - workspace_not_found
+            - invite_not_found
+            - invite_disabled
+            - user_not_found
             - entry_not_found
             - path_already_exists
             - entry_version_mismatch
             - username_taken
+            - invalid_role
+            - cannot_delete_admin_user
         message:
           type: string
         details:

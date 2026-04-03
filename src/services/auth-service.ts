@@ -1,3 +1,4 @@
+import { cloneValue } from "../core/clone";
 import { AppEnv } from "../config/env";
 import { AppError } from "../core/errors";
 import { createId, createOpaqueToken } from "../core/ids";
@@ -6,11 +7,13 @@ import {
   AccessTokenRecord,
   AuthPrincipal,
   DeviceSession,
+  GlobalRole,
   RefreshTokenRecord,
   StoredUser,
-  User
+  User,
+  WorkspaceEvent
 } from "../domain/types";
-import { MemoryState } from "./memory-state";
+import { MemoryState, StoredWorkspace } from "./memory-state";
 import { StateStore } from "./state-store";
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -20,6 +23,7 @@ interface SeedUserInput {
   username: string;
   password: string;
   displayName: string;
+  globalRole?: GlobalRole;
   isAdmin?: boolean;
 }
 
@@ -27,6 +31,12 @@ interface CreateUserInput {
   username: string;
   password: string;
   displayName?: string;
+  globalRole?: GlobalRole;
+}
+
+interface ManagedUserRecord extends User {
+  createdAt: string;
+  disabledAt?: string;
 }
 
 interface SessionBundle {
@@ -47,6 +57,7 @@ export class AuthService {
       username: this.env.devAuthUsername,
       password: this.env.devAuthPassword,
       displayName: this.env.devAuthDisplayName,
+      globalRole: "admin",
       isAdmin: true
     });
 
@@ -81,12 +92,14 @@ export class AuthService {
       throw new AppError(409, "username_taken", "Username is already taken.");
     }
 
+    const globalRole = this.normalizeManagedUserRole(input.globalRole);
     const now = new Date().toISOString();
     const user: StoredUser = {
       id: createId("usr"),
       username: input.username,
       displayName: input.displayName ?? input.username,
       isAdmin: false,
+      globalRole,
       passwordHash: hashPassword(input.password),
       createdAt: now
     };
@@ -95,6 +108,36 @@ export class AuthService {
     this.state.usersByUsername.set(user.username, user.id);
     await this.stateStore.saveState(this.state);
     return this.toUser(user);
+  }
+
+  listUsers(actor: User): ManagedUserRecord[] {
+    this.assertAdmin(actor);
+    return [...this.state.users.values()]
+      .map((user) => this.toManagedUser(user))
+      .sort((left, right) => left.username.localeCompare(right.username));
+  }
+
+  async deleteUser(actor: User, userId: string): Promise<ManagedUserRecord> {
+    this.assertAdmin(actor);
+    const user = this.state.users.get(userId);
+    if (!user || user.disabledAt) {
+      throw new AppError(404, "user_not_found", "User was not found.");
+    }
+    if (user.isAdmin) {
+      throw new AppError(
+        400,
+        "cannot_delete_admin_user",
+        "Deleting admin users is not supported."
+      );
+    }
+
+    this.revokeAllSessionsForUser(userId);
+    this.dropEphemeralUserTickets(userId);
+    this.removeUserFromWorkspaces(userId);
+    this.state.users.delete(userId);
+    this.state.usersByUsername.delete(user.username);
+    await this.stateStore.saveState(this.state);
+    return this.toManagedUser(user);
   }
 
   async updateDisplayName(userId: string, displayName: string): Promise<User> {
@@ -110,41 +153,6 @@ export class AuthService {
     user.displayName = displayName;
     await this.stateStore.saveState(this.state);
     return this.toUser(user);
-  }
-
-  private seedUser(input: SeedUserInput): boolean {
-    const existingUserId = this.state.usersByUsername.get(input.username);
-    if (existingUserId) {
-      const existing = this.state.users.get(existingUserId);
-      if (!existing) {
-        throw new Error("Corrupted auth state: username index points to missing user.");
-      }
-
-      const nextPasswordHash = hashPassword(input.password);
-      const changed =
-        existing.displayName !== input.displayName ||
-        existing.passwordHash !== nextPasswordHash ||
-        existing.isAdmin !== Boolean(input.isAdmin);
-
-      existing.displayName = input.displayName;
-      existing.passwordHash = nextPasswordHash;
-      existing.isAdmin = Boolean(input.isAdmin);
-      return changed;
-    }
-
-    const now = new Date().toISOString();
-    const user: StoredUser = {
-      id: createId("usr"),
-      username: input.username,
-      displayName: input.displayName,
-      isAdmin: Boolean(input.isAdmin),
-      passwordHash: hashPassword(input.password),
-      createdAt: now
-    };
-
-    this.state.users.set(user.id, user);
-    this.state.usersByUsername.set(user.username, user.id);
-    return true;
   }
 
   async login(username: string, password: string, deviceName: string): Promise<SessionBundle> {
@@ -214,6 +222,46 @@ export class AuthService {
     };
   }
 
+  private seedUser(input: SeedUserInput): boolean {
+    const normalizedRole = this.normalizeSeedRole(input);
+    const normalizedIsAdmin = normalizedRole === "admin" || Boolean(input.isAdmin);
+    const existingUserId = this.state.usersByUsername.get(input.username);
+    if (existingUserId) {
+      const existing = this.state.users.get(existingUserId);
+      if (!existing) {
+        throw new Error("Corrupted auth state: username index points to missing user.");
+      }
+
+      const nextPasswordHash = hashPassword(input.password);
+      const changed =
+        existing.displayName !== input.displayName ||
+        existing.passwordHash !== nextPasswordHash ||
+        existing.isAdmin !== normalizedIsAdmin ||
+        existing.globalRole !== normalizedRole;
+
+      existing.displayName = input.displayName;
+      existing.passwordHash = nextPasswordHash;
+      existing.isAdmin = normalizedIsAdmin;
+      existing.globalRole = normalizedRole;
+      return changed;
+    }
+
+    const now = new Date().toISOString();
+    const user: StoredUser = {
+      id: createId("usr"),
+      username: input.username,
+      displayName: input.displayName,
+      isAdmin: normalizedIsAdmin,
+      globalRole: normalizedRole,
+      passwordHash: hashPassword(input.password),
+      createdAt: now
+    };
+
+    this.state.users.set(user.id, user);
+    this.state.usersByUsername.set(user.username, user.id);
+    return true;
+  }
+
   private issueSession(user: StoredUser, device: DeviceSession): SessionBundle {
     const accessToken = this.createAccessToken(user.id, device.id);
     const refreshToken = this.createRefreshToken(user.id, device.id);
@@ -267,12 +315,156 @@ export class AuthService {
     }
   }
 
+  private revokeAllSessionsForUser(userId: string): void {
+    const deviceIds = new Set<string>();
+
+    for (const [deviceId, device] of this.state.devices.entries()) {
+      if (device.userId === userId) {
+        deviceIds.add(deviceId);
+        this.state.devices.delete(deviceId);
+      }
+    }
+
+    for (const [token, record] of this.state.accessTokens.entries()) {
+      if (record.userId === userId || deviceIds.has(record.deviceId)) {
+        this.state.accessTokens.delete(token);
+      }
+    }
+
+    for (const [token, record] of this.state.refreshTokens.entries()) {
+      if (record.userId === userId || deviceIds.has(record.deviceId)) {
+        this.state.refreshTokens.delete(token);
+      }
+    }
+  }
+
+  private dropEphemeralUserTickets(userId: string): void {
+    for (const [token, record] of this.state.crdtTokens.entries()) {
+      if (record.userId === userId) {
+        this.state.crdtTokens.delete(token);
+      }
+    }
+
+    for (const [ticketId, record] of this.state.blobUploadTickets.entries()) {
+      if (record.userId === userId) {
+        this.state.blobUploadTickets.delete(ticketId);
+      }
+    }
+
+    for (const [ticketId, record] of this.state.blobDownloadTickets.entries()) {
+      if (record.userId === userId) {
+        this.state.blobDownloadTickets.delete(ticketId);
+      }
+    }
+  }
+
+  private removeUserFromWorkspaces(userId: string): void {
+    for (const [workspaceId, workspace] of [...this.state.workspaces.entries()]) {
+      const membership = workspace.memberships.get(userId);
+      if (!membership) {
+        continue;
+      }
+
+      workspace.memberships.delete(userId);
+      this.publishWorkspaceEvent(workspace, "workspace.member.left", {
+        userId
+      });
+
+      if (workspace.memberships.size === 0) {
+        this.dropWorkspaceState(workspaceId);
+        continue;
+      }
+
+      if (membership.role === "owner" && !this.hasOwner(workspace)) {
+        const promotedMember = [...workspace.memberships.values()].sort((left, right) =>
+          left.joinedAt.localeCompare(right.joinedAt)
+        )[0];
+
+        if (promotedMember) {
+          promotedMember.role = "owner";
+          this.publishWorkspaceEvent(workspace, "workspace.member.role_updated", {
+            userId: promotedMember.userId,
+            role: promotedMember.role
+          });
+        }
+      }
+    }
+  }
+
+  private dropWorkspaceState(workspaceId: string): void {
+    this.state.workspaces.delete(workspaceId);
+
+    for (const [token, record] of this.state.crdtTokens.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.crdtTokens.delete(token);
+      }
+    }
+
+    for (const [ticketId, record] of this.state.blobUploadTickets.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.blobUploadTickets.delete(ticketId);
+      }
+    }
+
+    for (const [ticketId, record] of this.state.blobDownloadTickets.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.blobDownloadTickets.delete(ticketId);
+      }
+    }
+  }
+
+  private hasOwner(workspace: StoredWorkspace): boolean {
+    return [...workspace.memberships.values()].some((membership) => membership.role === "owner");
+  }
+
+  private publishWorkspaceEvent(
+    workspace: StoredWorkspace,
+    eventType: string,
+    payload: Record<string, unknown>
+  ): void {
+    const event: WorkspaceEvent = {
+      seq: workspace.nextEventSeq,
+      eventType,
+      payload,
+      createdAt: new Date().toISOString()
+    };
+
+    workspace.nextEventSeq += 1;
+    workspace.events.push(event);
+    for (const listener of workspace.listeners) {
+      listener(cloneValue(event));
+    }
+  }
+
+  private normalizeSeedRole(input: SeedUserInput): GlobalRole {
+    if (input.isAdmin || input.globalRole === "admin") {
+      return "admin";
+    }
+
+    return input.globalRole ?? "reader";
+  }
+
+  private normalizeManagedUserRole(role: GlobalRole | undefined): GlobalRole {
+    if (!role) {
+      return "reader";
+    }
+    if (role === "admin") {
+      throw new AppError(
+        400,
+        "invalid_role",
+        "Creating additional admin users is not supported."
+      );
+    }
+
+    return role;
+  }
+
   private isExpired(expiresAt: string): boolean {
     return Date.parse(expiresAt) <= Date.now();
   }
 
   private assertAdmin(user: User): void {
-    if (!user.isAdmin) {
+    if (!user.isAdmin || user.globalRole !== "admin") {
       throw new AppError(403, "forbidden", "Admin access is required.");
     }
   }
@@ -282,7 +474,16 @@ export class AuthService {
       id: user.id,
       username: user.username,
       displayName: user.displayName,
-      isAdmin: user.isAdmin
+      isAdmin: user.isAdmin,
+      globalRole: user.globalRole
+    };
+  }
+
+  private toManagedUser(user: StoredUser): ManagedUserRecord {
+    return {
+      ...this.toUser(user),
+      createdAt: user.createdAt,
+      ...(user.disabledAt !== undefined ? { disabledAt: user.disabledAt } : {})
     };
   }
 }

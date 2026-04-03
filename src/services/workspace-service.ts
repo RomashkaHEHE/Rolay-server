@@ -1,11 +1,9 @@
 import { cloneValue } from "../core/clone";
 import { AppError } from "../core/errors";
 import { createId, createInviteCode } from "../core/ids";
-import { createSlug, normalizePath, suggestConflictPath } from "../core/paths";
+import { normalizePath, suggestConflictPath } from "../core/paths";
 import {
   FileEntry,
-  Invite,
-  InviteRole,
   Membership,
   OperationPreconditions,
   OperationResult,
@@ -14,6 +12,7 @@ import {
   User,
   Workspace,
   WorkspaceEvent,
+  WorkspaceInvite,
   WorkspaceRole
 } from "../domain/types";
 import { MemoryState, StoredWorkspace, WorkspaceEventListener } from "./memory-state";
@@ -24,19 +23,87 @@ export interface EventStreamHandle {
   unsubscribe: () => void;
 }
 
+interface WorkspaceListItem {
+  workspace: Workspace;
+  membershipRole: WorkspaceRole;
+  createdAt: string;
+  memberCount: number;
+  inviteEnabled: boolean;
+}
+
+interface WorkspaceAdminListItem extends WorkspaceListItem {
+  ownerCount: number;
+}
+
+interface WorkspaceMemberRecord {
+  user: User;
+  role: WorkspaceRole;
+  joinedAt: string;
+}
+
+interface WorkspaceInviteView {
+  workspaceId: string;
+  code: string;
+  enabled: boolean;
+  updatedAt: string;
+}
+
+interface WorkspaceMemberMutationResult {
+  workspace: Workspace;
+  user: User;
+  membership: Membership;
+}
+
 export class WorkspaceService {
   constructor(
     private readonly state: MemoryState,
     private readonly stateStore: StateStore
   ) {}
 
-  async createWorkspace(actor: User, name: string, slug?: string): Promise<Workspace> {
+  listUserWorkspaces(actor: User): WorkspaceListItem[] {
+    return [...this.state.workspaces.values()]
+      .filter((workspace) => workspace.memberships.has(actor.id))
+      .map((workspace) => {
+        const membership = workspace.memberships.get(actor.id);
+        if (!membership) {
+          throw new Error("Corrupted workspace membership state.");
+        }
+
+        return {
+          workspace: cloneValue(workspace.workspace),
+          membershipRole: membership.role,
+          createdAt: workspace.createdAt,
+          memberCount: workspace.memberships.size,
+          inviteEnabled: workspace.invite.enabled
+        };
+      })
+      .sort((left, right) => left.workspace.name.localeCompare(right.workspace.name));
+  }
+
+  listAllWorkspaces(actor: User): WorkspaceAdminListItem[] {
+    this.assertAdmin(actor);
+    return [...this.state.workspaces.values()]
+      .map((workspace) => ({
+        workspace: cloneValue(workspace.workspace),
+        membershipRole: workspace.memberships.get(workspace.createdBy)?.role ?? "owner",
+        createdAt: workspace.createdAt,
+        memberCount: workspace.memberships.size,
+        inviteEnabled: workspace.invite.enabled,
+        ownerCount: [...workspace.memberships.values()].filter(
+          (membership) => membership.role === "owner"
+        ).length
+      }))
+      .sort((left, right) => left.workspace.name.localeCompare(right.workspace.name));
+  }
+
+  async createWorkspace(actor: User, name: string, _slug?: string): Promise<Workspace> {
+    this.assertCanCreateWorkspace(actor);
+
     const now = new Date().toISOString();
     const workspace: Workspace = {
       id: createId("ws"),
       name
     };
-    workspace.slug = slug ? createSlug(slug) : createSlug(name);
 
     const membership: Membership = {
       userId: actor.id,
@@ -48,8 +115,12 @@ export class WorkspaceService {
       workspace,
       createdBy: actor.id,
       createdAt: now,
+      invite: {
+        code: createInviteCode(),
+        enabled: true,
+        updatedAt: now
+      },
       memberships: new Map([[actor.id, membership]]),
-      invites: new Map(),
       entries: new Map(),
       events: [],
       nextEventSeq: 1,
@@ -62,63 +133,163 @@ export class WorkspaceService {
     return cloneValue(workspace);
   }
 
-  async createInvite(
+  getWorkspaceMembers(actor: User, workspaceId: string): WorkspaceMemberRecord[] {
+    const workspace = this.requireWorkspace(workspaceId);
+    this.assertCanInspectWorkspace(workspace, actor);
+
+    return [...workspace.memberships.values()]
+      .map((membership) => {
+        const user = this.state.users.get(membership.userId);
+        if (!user || user.disabledAt) {
+          throw new Error("Corrupted workspace state: membership points to missing user.");
+        }
+
+        return {
+          user: this.toUser(user),
+          role: membership.role,
+          joinedAt: membership.joinedAt
+        };
+      })
+      .sort((left, right) => {
+        if (left.role !== right.role) {
+          return left.role === "owner" ? -1 : 1;
+        }
+
+        return left.user.username.localeCompare(right.user.username);
+      });
+  }
+
+  getInvite(actor: User, workspaceId: string): WorkspaceInviteView {
+    const workspace = this.requireWorkspace(workspaceId);
+    this.assertCanManageWorkspace(workspace, actor);
+    return this.toInviteView(workspace.workspace.id, workspace.invite);
+  }
+
+  async updateInviteEnabled(
     actor: User,
     workspaceId: string,
-    role: InviteRole,
-    expiresAt?: string,
-    maxUses?: number
-  ): Promise<Invite> {
+    enabled: boolean
+  ): Promise<WorkspaceInviteView> {
     const workspace = this.requireWorkspace(workspaceId);
-    this.assertRole(workspace, actor.id, "owner");
+    this.assertCanManageWorkspace(workspace, actor);
 
-    const invite: Invite = {
-      id: createId("inv"),
-      workspaceId,
-      code: createInviteCode(),
-      role,
-      usedCount: 0
-    };
-    if (expiresAt !== undefined) {
-      invite.expiresAt = expiresAt;
-    }
-    if (maxUses !== undefined) {
-      invite.maxUses = maxUses;
+    if (workspace.invite.enabled === enabled) {
+      return this.toInviteView(workspace.workspace.id, workspace.invite);
     }
 
-    workspace.invites.set(invite.id, invite);
-    this.state.invitesByCode.set(invite.code, invite);
+    workspace.invite.enabled = enabled;
+    workspace.invite.updatedAt = new Date().toISOString();
+    this.publishEvent(workspace, "workspace.invite.updated", {
+      code: workspace.invite.code,
+      enabled: workspace.invite.enabled
+    });
     await this.stateStore.saveState(this.state);
-    return cloneValue(invite);
+    return this.toInviteView(workspace.workspace.id, workspace.invite);
+  }
+
+  async regenerateInvite(actor: User, workspaceId: string): Promise<WorkspaceInviteView> {
+    const workspace = this.requireWorkspace(workspaceId);
+    this.assertCanManageWorkspace(workspace, actor);
+
+    workspace.invite.code = createInviteCode();
+    workspace.invite.updatedAt = new Date().toISOString();
+    this.publishEvent(workspace, "workspace.invite.regenerated", {
+      code: workspace.invite.code,
+      enabled: workspace.invite.enabled
+    });
+    await this.stateStore.saveState(this.state);
+    return this.toInviteView(workspace.workspace.id, workspace.invite);
   }
 
   async acceptInvite(actor: User, code: string): Promise<Workspace> {
-    const invite = this.state.invitesByCode.get(code);
-    if (!invite) {
+    const workspace = [...this.state.workspaces.values()].find(
+      (candidate) => candidate.invite.code === code
+    );
+    if (!workspace) {
       throw new AppError(404, "invite_not_found", "Invite not found.");
     }
-    if (invite.expiresAt && Date.parse(invite.expiresAt) <= Date.now()) {
-      throw new AppError(400, "invite_expired", "Invite has expired.");
-    }
-    if (invite.maxUses !== undefined && invite.usedCount >= invite.maxUses) {
-      throw new AppError(400, "invite_exhausted", "Invite has no remaining uses.");
+    if (!workspace.invite.enabled) {
+      throw new AppError(403, "invite_disabled", "Invite is disabled.");
     }
 
-    const workspace = this.requireWorkspace(invite.workspaceId);
     if (!workspace.memberships.has(actor.id)) {
-      workspace.memberships.set(actor.id, {
+      const membership: Membership = {
         userId: actor.id,
-        role: invite.role,
+        role: "member",
         joinedAt: new Date().toISOString()
-      });
-      invite.usedCount += 1;
+      };
+      workspace.memberships.set(actor.id, membership);
       this.publishEvent(workspace, "workspace.member.joined", {
         userId: actor.id,
-        role: invite.role
+        role: membership.role
       });
       await this.stateStore.saveState(this.state);
     }
 
+    return cloneValue(workspace.workspace);
+  }
+
+  async addMemberByUsername(
+    actor: User,
+    workspaceId: string,
+    username: string,
+    role: WorkspaceRole = "member"
+  ): Promise<WorkspaceMemberMutationResult> {
+    const workspace = this.requireWorkspace(workspaceId);
+    this.assertCanManageWorkspace(workspace, actor);
+
+    const targetUserId = this.state.usersByUsername.get(username);
+    if (!targetUserId) {
+      throw new AppError(404, "user_not_found", "User was not found.");
+    }
+
+    const user = this.state.users.get(targetUserId);
+    if (!user || user.disabledAt) {
+      throw new AppError(404, "user_not_found", "User was not found.");
+    }
+
+    const existingMembership = workspace.memberships.get(user.id);
+    if (existingMembership) {
+      if (existingMembership.role !== role) {
+        existingMembership.role = role;
+        this.publishEvent(workspace, "workspace.member.role_updated", {
+          userId: user.id,
+          role
+        });
+        await this.stateStore.saveState(this.state);
+      }
+
+      return {
+        workspace: cloneValue(workspace.workspace),
+        user: this.toUser(user),
+        membership: cloneValue(existingMembership)
+      };
+    }
+
+    const membership: Membership = {
+      userId: user.id,
+      role,
+      joinedAt: new Date().toISOString()
+    };
+    workspace.memberships.set(user.id, membership);
+    this.publishEvent(workspace, "workspace.member.joined", {
+      userId: user.id,
+      role
+    });
+    await this.stateStore.saveState(this.state);
+
+    return {
+      workspace: cloneValue(workspace.workspace),
+      user: this.toUser(user),
+      membership: cloneValue(membership)
+    };
+  }
+
+  async deleteWorkspace(actor: User, workspaceId: string): Promise<Workspace> {
+    const workspace = this.requireWorkspace(workspaceId);
+    this.assertCanManageWorkspace(workspace, actor);
+    this.dropWorkspaceState(workspaceId);
+    await this.stateStore.saveState(this.state);
     return cloneValue(workspace.workspace);
   }
 
@@ -672,24 +843,47 @@ export class WorkspaceService {
     return membership;
   }
 
-  private assertRole(
-    workspace: StoredWorkspace,
-    userId: string,
-    requiredRole: WorkspaceRole
-  ): Membership {
-    const membership = this.assertMember(workspace, userId);
-    if (requiredRole === "owner" && membership.role !== "owner") {
+  private assertCanCreateWorkspace(actor: User): void {
+    if (actor.isAdmin || actor.globalRole === "admin" || actor.globalRole === "writer") {
+      return;
+    }
+
+    throw new AppError(
+      403,
+      "forbidden",
+      "Writer or admin access is required to create rooms."
+    );
+  }
+
+  private assertCanInspectWorkspace(workspace: StoredWorkspace, actor: User): void {
+    if (actor.isAdmin) {
+      return;
+    }
+
+    this.assertMember(workspace, actor.id);
+  }
+
+  private assertCanManageWorkspace(workspace: StoredWorkspace, actor: User): Membership | undefined {
+    if (actor.isAdmin) {
+      return undefined;
+    }
+
+    const membership = this.assertMember(workspace, actor.id);
+    if (membership.role !== "owner") {
       throw new AppError(403, "forbidden", "Owner access is required.");
     }
+
     return membership;
   }
 
   private assertCanEdit(workspace: StoredWorkspace, userId: string): Membership {
-    const membership = this.assertMember(workspace, userId);
-    if (membership.role === "viewer") {
-      throw new AppError(403, "forbidden", "Editor access is required.");
+    return this.assertMember(workspace, userId);
+  }
+
+  private assertAdmin(actor: User): void {
+    if (!actor.isAdmin || actor.globalRole !== "admin") {
+      throw new AppError(403, "forbidden", "Admin access is required.");
     }
-    return membership;
   }
 
   private findActiveEntryByPath(
@@ -746,5 +940,52 @@ export class WorkspaceService {
     }
 
     return candidate;
+  }
+
+  private dropWorkspaceState(workspaceId: string): void {
+    this.state.workspaces.delete(workspaceId);
+
+    for (const [token, record] of this.state.crdtTokens.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.crdtTokens.delete(token);
+      }
+    }
+
+    for (const [ticketId, record] of this.state.blobUploadTickets.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.blobUploadTickets.delete(ticketId);
+      }
+    }
+
+    for (const [ticketId, record] of this.state.blobDownloadTickets.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.blobDownloadTickets.delete(ticketId);
+      }
+    }
+  }
+
+  private toInviteView(workspaceId: string, invite: WorkspaceInvite): WorkspaceInviteView {
+    return {
+      workspaceId,
+      code: invite.code,
+      enabled: invite.enabled,
+      updatedAt: invite.updatedAt
+    };
+  }
+
+  private toUser(user: {
+    id: string;
+    username: string;
+    displayName: string;
+    isAdmin: boolean;
+    globalRole: User["globalRole"];
+  }): User {
+    return {
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      isAdmin: user.isAdmin,
+      globalRole: user.globalRole
+    };
   }
 }

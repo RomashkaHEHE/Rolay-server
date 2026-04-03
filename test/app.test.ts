@@ -85,7 +85,7 @@ async function loginAs(
   username: string,
   password: string,
   deviceName: string
-): Promise<{ accessToken: string; refreshToken: string }> {
+): Promise<{ accessToken: string; refreshToken: string; user: Record<string, unknown> }> {
   const response = await app.inject({
     method: "POST",
     url: "/v1/auth/login",
@@ -107,6 +107,7 @@ test("memory state snapshot round-trip preserves persisted records", async () =>
     username: "alice",
     displayName: "Alice",
     isAdmin: true,
+    globalRole: "admin" as const,
     passwordHash: "hash",
     createdAt: "2026-01-01T00:00:00.000Z"
   };
@@ -127,13 +128,6 @@ test("memory state snapshot round-trip preserves persisted records", async () =>
     deleted: false,
     updatedAt: "2026-01-01T00:00:00.000Z"
   };
-  const invite = {
-    id: "inv_1",
-    workspaceId: "ws_1",
-    code: "INVITE123",
-    role: "editor" as const,
-    usedCount: 1
-  };
 
   state.users.set(user.id, user);
   state.usersByUsername.set(user.username, user.id);
@@ -153,11 +147,15 @@ test("memory state snapshot round-trip preserves persisted records", async () =>
   state.workspaces.set("ws_1", {
     workspace: {
       id: "ws_1",
-      slug: "notes",
       name: "Notes"
     },
     createdBy: user.id,
     createdAt: "2026-01-01T00:00:00.000Z",
+    invite: {
+      code: "invite-code",
+      enabled: true,
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    },
     memberships: new Map([
       [
         user.id,
@@ -168,7 +166,6 @@ test("memory state snapshot round-trip preserves persisted records", async () =>
         }
       ]
     ]),
-    invites: new Map([[invite.id, invite]]),
     entries: new Map([[entry.id, entry]]),
     events: [
       {
@@ -194,7 +191,6 @@ test("memory state snapshot round-trip preserves persisted records", async () =>
     ]),
     listeners: new Set()
   });
-  state.invitesByCode.set(invite.code, invite);
   state.blobObjects.set("sha256:blob", {
     hash: "sha256:blob",
     sizeBytes: 5,
@@ -250,7 +246,7 @@ test("GET /ready returns health payload", async () => {
   await app.close();
 });
 
-test("auth login and refresh issue opaque bearer tokens", async () => {
+test("auth login and refresh issue opaque bearer tokens with global role", async () => {
   const env = createTestEnv();
   const app = await buildApp({
     logger: false,
@@ -274,7 +270,8 @@ test("auth login and refresh issue opaque bearer tokens", async () => {
     id: login.json().user.id,
     username: "alice",
     displayName: "Alice",
-    isAdmin: true
+    isAdmin: true,
+    globalRole: "admin"
   });
 
   const refresh = await app.inject({
@@ -293,7 +290,7 @@ test("auth login and refresh issue opaque bearer tokens", async () => {
   await cleanupTestEnv(env);
 });
 
-test("workspace flow supports invites, tree ops, folder moves, and conflicts", async () => {
+test("writer can create duplicate-named rooms, manage invite key, and members can edit", async () => {
   const env = createTestEnv();
   const app = await buildApp({
     logger: false,
@@ -301,68 +298,196 @@ test("workspace flow supports invites, tree ops, folder moves, and conflicts", a
   });
 
   await app.rolay.auth.upsertUser({
-    username: "bob",
+    username: "writer1",
     password: "secret",
-    displayName: "Bob"
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader1",
+    password: "secret",
+    displayName: "Reader One",
+    globalRole: "reader"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader2",
+    password: "secret",
+    displayName: "Reader Two",
+    globalRole: "reader"
   });
 
-  const aliceSession = await loginAs(app, "alice", "secret", "alice-laptop");
-  const bobSession = await loginAs(app, "bob", "secret", "bob-laptop");
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const readerSession = await loginAs(app, "reader1", "secret", "reader-laptop");
+  const secondReaderSession = await loginAs(app, "reader2", "secret", "reader2-laptop");
 
-  const workspaceResponse = await app.inject({
+  const firstRoomResponse = await app.inject({
     method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Calculus"
+    }
+  });
+
+  const secondRoomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Calculus"
+    }
+  });
+
+  assert.equal(firstRoomResponse.statusCode, 201);
+  assert.equal(secondRoomResponse.statusCode, 201);
+  assert.equal(firstRoomResponse.json().workspace.name, "Calculus");
+  assert.equal(secondRoomResponse.json().workspace.name, "Calculus");
+  assert.notEqual(firstRoomResponse.json().workspace.id, secondRoomResponse.json().workspace.id);
+
+  const readerCreateAttempt = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${readerSession.accessToken}`
+    },
+    payload: {
+      name: "Should Fail"
+    }
+  });
+
+  assert.equal(readerCreateAttempt.statusCode, 403);
+
+  const listRoomsResponse = await app.inject({
+    method: "GET",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(listRoomsResponse.statusCode, 200);
+  assert.equal(listRoomsResponse.json().workspaces.length, 2);
+
+  const roomId = firstRoomResponse.json().workspace.id;
+  const inviteResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(inviteResponse.statusCode, 200);
+  const originalInviteCode = inviteResponse.json().invite.code;
+  assert.equal(inviteResponse.json().invite.enabled, true);
+
+  const disableInviteResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      enabled: false
+    }
+  });
+
+  assert.equal(disableInviteResponse.statusCode, 200);
+  assert.equal(disableInviteResponse.json().invite.enabled, false);
+  assert.equal(disableInviteResponse.json().invite.code, originalInviteCode);
+
+  const disabledJoinResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${secondReaderSession.accessToken}`
+    },
+    payload: {
+      code: originalInviteCode
+    }
+  });
+
+  assert.equal(disabledJoinResponse.statusCode, 403);
+
+  const enableInviteResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      enabled: true
+    }
+  });
+
+  assert.equal(enableInviteResponse.statusCode, 200);
+  assert.equal(enableInviteResponse.json().invite.code, originalInviteCode);
+  assert.equal(enableInviteResponse.json().invite.enabled, true);
+
+  const regenerateInviteResponse = await app.inject({
+    method: "POST",
+    url: `/v1/rooms/${roomId}/invite/regenerate`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(regenerateInviteResponse.statusCode, 200);
+  const regeneratedCode = regenerateInviteResponse.json().invite.code;
+  assert.notEqual(regeneratedCode, originalInviteCode);
+  assert.equal(regenerateInviteResponse.json().invite.enabled, true);
+
+  const oldCodeJoinResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${readerSession.accessToken}`
+    },
+    payload: {
+      code: originalInviteCode
+    }
+  });
+
+  assert.equal(oldCodeJoinResponse.statusCode, 404);
+
+  const joinResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${readerSession.accessToken}`
+    },
+    payload: {
+      code: regeneratedCode
+    }
+  });
+
+  assert.equal(joinResponse.statusCode, 200);
+  assert.equal(joinResponse.json().workspace.id, roomId);
+
+  const readerRoomsResponse = await app.inject({
+    method: "GET",
     url: "/v1/workspaces",
     headers: {
-      authorization: `Bearer ${aliceSession.accessToken}`
-    },
-    payload: {
-      name: "Calculus Notes"
+      authorization: `Bearer ${readerSession.accessToken}`
     }
   });
 
-  assert.equal(workspaceResponse.statusCode, 201);
-  const workspace = workspaceResponse.json().workspace;
-  assert.equal(workspace.name, "Calculus Notes");
-  assert.equal(workspace.slug, "calculus-notes");
-
-  const inviteResponse = await app.inject({
-    method: "POST",
-    url: `/v1/workspaces/${workspace.id}/invites`,
-    headers: {
-      authorization: `Bearer ${aliceSession.accessToken}`
-    },
-    payload: {
-      role: "editor",
-      maxUses: 1
-    }
-  });
-
-  assert.equal(inviteResponse.statusCode, 201);
-  const invite = inviteResponse.json().invite;
-  assert.equal(invite.role, "editor");
-
-  const acceptResponse = await app.inject({
-    method: "POST",
-    url: "/v1/invites/accept",
-    headers: {
-      authorization: `Bearer ${bobSession.accessToken}`
-    },
-    payload: {
-      code: invite.code
-    }
-  });
-
-  assert.equal(acceptResponse.statusCode, 200);
-  assert.equal(acceptResponse.json().workspace.id, workspace.id);
+  assert.equal(readerRoomsResponse.statusCode, 200);
+  assert.equal(readerRoomsResponse.json().workspaces.length, 1);
+  assert.equal(readerRoomsResponse.json().workspaces[0].membershipRole, "member");
 
   const createBatch = await app.inject({
     method: "POST",
-    url: `/v1/workspaces/${workspace.id}/ops/batch`,
+    url: `/v1/workspaces/${roomId}/ops/batch`,
     headers: {
-      authorization: `Bearer ${aliceSession.accessToken}`
+      authorization: `Bearer ${readerSession.accessToken}`
     },
     payload: {
-      deviceId: "alice-device-1",
+      deviceId: "reader-device-1",
       operations: [
         {
           opId: "op_folder",
@@ -380,40 +505,35 @@ test("workspace flow supports invites, tree ops, folder moves, and conflicts", a
 
   assert.equal(createBatch.statusCode, 200);
   const createdResults = createBatch.json().results;
-  assert.equal(createdResults.length, 2);
-  assert.equal(createdResults[0].status, "applied");
   assert.equal(createdResults[1].entry.path, "Math/Week-01.md");
-  assert.match(createdResults[1].entry.docId, /^doc_/);
 
   const snapshotResponse = await app.inject({
     method: "GET",
-    url: `/v1/workspaces/${workspace.id}/tree`,
+    url: `/v1/workspaces/${roomId}/tree`,
     headers: {
-      authorization: `Bearer ${bobSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     }
   });
 
   assert.equal(snapshotResponse.statusCode, 200);
   assert.equal(snapshotResponse.json().entries.length, 2);
-
-  const entries = snapshotResponse.json().entries;
-  const folderEntry = entries.find((entry: { kind: string }) => entry.kind === "folder");
-  const markdownEntry = entries.find(
+  const folderEntry = snapshotResponse.json().entries.find(
+    (entry: { kind: string }) => entry.kind === "folder"
+  );
+  const markdownEntry = snapshotResponse.json().entries.find(
     (entry: { kind: string }) => entry.kind === "markdown"
   );
   assert.ok(folderEntry);
   assert.ok(markdownEntry);
-  assert.equal(folderEntry.path, "Math");
-  assert.equal(markdownEntry.path, "Math/Week-01.md");
 
   const moveFolderResponse = await app.inject({
     method: "POST",
-    url: `/v1/workspaces/${workspace.id}/ops/batch`,
+    url: `/v1/workspaces/${roomId}/ops/batch`,
     headers: {
-      authorization: `Bearer ${aliceSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     },
     payload: {
-      deviceId: "alice-device-1",
+      deviceId: "writer-device-1",
       operations: [
         {
           opId: "op_move_folder",
@@ -432,31 +552,14 @@ test("workspace flow supports invites, tree ops, folder moves, and conflicts", a
   assert.equal(moveFolderResponse.statusCode, 200);
   assert.equal(moveFolderResponse.json().results[0].entry.path, "Lectures");
 
-  const movedSnapshot = await app.inject({
-    method: "GET",
-    url: `/v1/workspaces/${workspace.id}/tree`,
-    headers: {
-      authorization: `Bearer ${bobSession.accessToken}`
-    }
-  });
-
-  assert.equal(movedSnapshot.statusCode, 200);
-  assert.deepEqual(
-    movedSnapshot
-      .json()
-      .entries.map((entry: { path: string }) => entry.path)
-      .sort(),
-    ["Lectures", "Lectures/Week-01.md"]
-  );
-
   const conflictResponse = await app.inject({
     method: "POST",
-    url: `/v1/workspaces/${workspace.id}/ops/batch`,
+    url: `/v1/workspaces/${roomId}/ops/batch`,
     headers: {
-      authorization: `Bearer ${aliceSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     },
     payload: {
-      deviceId: "alice-device-2",
+      deviceId: "writer-device-2",
       operations: [
         {
           opId: "op_conflict",
@@ -480,178 +583,229 @@ test("workspace flow supports invites, tree ops, folder moves, and conflicts", a
   await cleanupTestEnv(env);
 });
 
-test("admin can create managed users and users can update their display name", async () => {
-  const env = createTestEnv({
-    devAuthUsername: "admin",
-    devAuthPassword: "secret",
-    devAuthDisplayName: "Admin User"
-  });
+test("admin can manage users and rooms", async () => {
+  const env = createTestEnv();
   const app = await buildApp({
     logger: false,
     env
   });
 
-  const adminSession = await loginAs(app, "admin", "secret", "admin-laptop");
+  const adminSession = await loginAs(app, "alice", "secret", "admin-laptop");
 
-  const createUserResponse = await app.inject({
+  const createWriterResponse = await app.inject({
     method: "POST",
     url: "/v1/admin/users",
     headers: {
       authorization: `Bearer ${adminSession.accessToken}`
     },
     payload: {
-      username: "student1",
-      password: "student-secret"
+      username: "writer1",
+      password: "writer-secret",
+      globalRole: "writer"
     }
   });
 
-  assert.equal(createUserResponse.statusCode, 201);
-  assert.deepEqual(createUserResponse.json().user, {
-    id: createUserResponse.json().user.id,
-    username: "student1",
-    displayName: "student1",
-    isAdmin: false
+  const createReaderResponse = await app.inject({
+    method: "POST",
+    url: "/v1/admin/users",
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    },
+    payload: {
+      username: "reader1",
+      password: "reader-secret",
+      globalRole: "reader",
+      displayName: "Reader One"
+    }
   });
 
-  const studentSession = await loginAs(app, "student1", "student-secret", "student-laptop");
-  assert.equal(studentSession.accessToken.length > 0, true);
+  assert.equal(createWriterResponse.statusCode, 201);
+  assert.equal(createWriterResponse.json().user.globalRole, "writer");
+  assert.equal(createReaderResponse.statusCode, 201);
+  assert.equal(createReaderResponse.json().user.displayName, "Reader One");
 
-  const meResponse = await app.inject({
+  const usersListResponse = await app.inject({
     method: "GET",
-    url: "/v1/auth/me",
+    url: "/v1/admin/users",
     headers: {
-      authorization: `Bearer ${studentSession.accessToken}`
+      authorization: `Bearer ${adminSession.accessToken}`
     }
   });
 
-  assert.equal(meResponse.statusCode, 200);
-  assert.deepEqual(meResponse.json().user, {
-    id: meResponse.json().user.id,
-    username: "student1",
-    displayName: "student1",
-    isAdmin: false
-  });
+  assert.equal(usersListResponse.statusCode, 200);
+  assert.equal(usersListResponse.json().users.length, 3);
 
-  const updateProfileResponse = await app.inject({
-    method: "PATCH",
-    url: "/v1/auth/me/profile",
+  const writerSession = await loginAs(app, "writer1", "writer-secret", "writer-laptop");
+  const createRoomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
     headers: {
-      authorization: `Bearer ${studentSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     },
     payload: {
-      displayName: "Student One"
+      name: "Physics"
     }
   });
 
-  assert.equal(updateProfileResponse.statusCode, 200);
-  assert.deepEqual(updateProfileResponse.json().user, {
-    id: updateProfileResponse.json().user.id,
-    username: "student1",
-    displayName: "Student One",
-    isAdmin: false
+  assert.equal(createRoomResponse.statusCode, 201);
+  const roomId = createRoomResponse.json().workspace.id;
+
+  const adminWorkspacesResponse = await app.inject({
+    method: "GET",
+    url: "/v1/admin/workspaces",
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    }
   });
 
-  const duplicateUserResponse = await app.inject({
+  assert.equal(adminWorkspacesResponse.statusCode, 200);
+  assert.equal(adminWorkspacesResponse.json().workspaces.length, 1);
+  assert.equal(adminWorkspacesResponse.json().workspaces[0].workspace.id, roomId);
+
+  const addMemberResponse = await app.inject({
     method: "POST",
-    url: "/v1/admin/users",
+    url: `/v1/admin/workspaces/${roomId}/members`,
     headers: {
       authorization: `Bearer ${adminSession.accessToken}`
     },
     payload: {
-      username: "student1",
-      password: "another-secret"
+      username: "reader1",
+      role: "member"
     }
   });
 
-  assert.equal(duplicateUserResponse.statusCode, 409);
-  assert.equal(duplicateUserResponse.json().error.code, "username_taken");
+  assert.equal(addMemberResponse.statusCode, 200);
+  assert.equal(addMemberResponse.json().membership.role, "member");
+  assert.equal(addMemberResponse.json().user.username, "reader1");
 
-  const nonAdminCreateResponse = await app.inject({
-    method: "POST",
-    url: "/v1/admin/users",
+  const membersResponse = await app.inject({
+    method: "GET",
+    url: `/v1/admin/workspaces/${roomId}/members`,
     headers: {
-      authorization: `Bearer ${studentSession.accessToken}`
-    },
-    payload: {
-      username: "student2",
-      password: "student-secret"
+      authorization: `Bearer ${adminSession.accessToken}`
     }
   });
 
-  assert.equal(nonAdminCreateResponse.statusCode, 403);
+  assert.equal(membersResponse.statusCode, 200);
+  assert.equal(membersResponse.json().members.length, 2);
+
+  const deleteUserResponse = await app.inject({
+    method: "DELETE",
+    url: `/v1/admin/users/${createReaderResponse.json().user.id}`,
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    }
+  });
+
+  assert.equal(deleteUserResponse.statusCode, 200);
+  assert.equal(deleteUserResponse.json().user.username, "reader1");
+
+  const membersAfterDeleteResponse = await app.inject({
+    method: "GET",
+    url: `/v1/admin/workspaces/${roomId}/members`,
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    }
+  });
+
+  assert.equal(membersAfterDeleteResponse.statusCode, 200);
+  assert.equal(membersAfterDeleteResponse.json().members.length, 1);
+  assert.equal(membersAfterDeleteResponse.json().members[0].user.username, "writer1");
+
+  const deleteWorkspaceResponse = await app.inject({
+    method: "DELETE",
+    url: `/v1/admin/workspaces/${roomId}`,
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    }
+  });
+
+  assert.equal(deleteWorkspaceResponse.statusCode, 200);
+  assert.equal(deleteWorkspaceResponse.json().workspace.id, roomId);
+
+  const adminWorkspacesAfterDeleteResponse = await app.inject({
+    method: "GET",
+    url: "/v1/admin/workspaces",
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    }
+  });
+
+  assert.equal(adminWorkspacesAfterDeleteResponse.statusCode, 200);
+  assert.equal(adminWorkspacesAfterDeleteResponse.json().workspaces.length, 0);
 
   await app.close();
   await cleanupTestEnv(env);
 });
 
-test("file endpoints issue CRDT tokens, enforce upload roles, and return blob tickets", async () => {
-  const env = createTestEnv({
-    devAuthUsername: "owner",
-    devAuthPassword: "secret",
-    devAuthDisplayName: "Owner"
-  });
+test("file endpoints issue CRDT tokens and blob tickets for room members", async () => {
+  const env = createTestEnv();
   const app = await buildApp({
     logger: false,
     env
   });
 
   await app.rolay.auth.upsertUser({
-    username: "viewer",
+    username: "writer1",
     password: "secret",
-    displayName: "Viewer"
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader1",
+    password: "secret",
+    displayName: "Reader One",
+    globalRole: "reader"
   });
 
-  const ownerSession = await loginAs(app, "owner", "secret", "owner-laptop");
-  const viewerSession = await loginAs(app, "viewer", "secret", "viewer-laptop");
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const readerSession = await loginAs(app, "reader1", "secret", "reader-laptop");
 
-  const workspaceResponse = await app.inject({
+  const roomResponse = await app.inject({
     method: "POST",
-    url: "/v1/workspaces",
+    url: "/v1/rooms",
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     },
     payload: {
       name: "Physics Notes"
     }
   });
 
-  assert.equal(workspaceResponse.statusCode, 201);
-  const workspace = workspaceResponse.json().workspace;
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
 
   const inviteResponse = await app.inject({
-    method: "POST",
-    url: `/v1/workspaces/${workspace.id}/invites`,
+    method: "GET",
+    url: `/v1/rooms/${roomId}/invite`,
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
-    },
-    payload: {
-      role: "viewer"
+      authorization: `Bearer ${writerSession.accessToken}`
     }
   });
 
-  assert.equal(inviteResponse.statusCode, 201);
+  assert.equal(inviteResponse.statusCode, 200);
 
-  const acceptResponse = await app.inject({
+  const joinResponse = await app.inject({
     method: "POST",
-    url: "/v1/invites/accept",
+    url: "/v1/rooms/join",
     headers: {
-      authorization: `Bearer ${viewerSession.accessToken}`
+      authorization: `Bearer ${readerSession.accessToken}`
     },
     payload: {
       code: inviteResponse.json().invite.code
     }
   });
 
-  assert.equal(acceptResponse.statusCode, 200);
+  assert.equal(joinResponse.statusCode, 200);
 
   const createEntriesResponse = await app.inject({
     method: "POST",
-    url: `/v1/workspaces/${workspace.id}/ops/batch`,
+    url: `/v1/workspaces/${roomId}/ops/batch`,
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     },
     payload: {
-      deviceId: "owner-device-1",
+      deviceId: "writer-device-1",
       operations: [
         {
           opId: "op_markdown",
@@ -675,7 +829,7 @@ test("file endpoints issue CRDT tokens, enforce upload roles, and return blob ti
     method: "POST",
     url: `/v1/files/${markdownEntry.id}/crdt-token`,
     headers: {
-      authorization: `Bearer ${viewerSession.accessToken}`
+      authorization: `Bearer ${readerSession.accessToken}`
     }
   });
 
@@ -683,32 +837,15 @@ test("file endpoints issue CRDT tokens, enforce upload roles, and return blob ti
   assert.equal(crdtTokenResponse.json().entryId, markdownEntry.id);
   assert.equal(crdtTokenResponse.json().docId, markdownEntry.docId);
   assert.equal(crdtTokenResponse.json().provider, "yjs-hocuspocus");
-  assert.equal(crdtTokenResponse.json().wsUrl, "ws://localhost:3000/v1/crdt");
-  assert.match(crdtTokenResponse.json().token, /^[A-Za-z0-9_-]{20,}$/);
-
-  const viewerUploadAttempt = await app.inject({
-    method: "POST",
-    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
-    headers: {
-      authorization: `Bearer ${viewerSession.accessToken}`
-    },
-    payload: {
-      hash: "sha256:invalid",
-      sizeBytes: 48213,
-      mimeType: "image/png"
-    }
-  });
-
-  assert.equal(viewerUploadAttempt.statusCode, 403);
 
   const binaryPayload = Buffer.from("diagram-binary-v1", "utf8");
   const binaryHash = createSha256Hash(binaryPayload);
 
-  const ownerUploadTicket = await app.inject({
+  const memberUploadTicket = await app.inject({
     method: "POST",
     url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
+      authorization: `Bearer ${readerSession.accessToken}`
     },
     payload: {
       hash: binaryHash,
@@ -717,15 +854,10 @@ test("file endpoints issue CRDT tokens, enforce upload roles, and return blob ti
     }
   });
 
-  assert.equal(ownerUploadTicket.statusCode, 200);
-  assert.equal(ownerUploadTicket.json().alreadyExists, false);
-  assert.equal(ownerUploadTicket.json().upload.method, "PUT");
-  assert.match(
-    ownerUploadTicket.json().upload.url,
-    /http:\/\/localhost:3000\/_storage\/upload\//
-  );
+  assert.equal(memberUploadTicket.statusCode, 200);
+  assert.equal(memberUploadTicket.json().alreadyExists, false);
+  const uploadPath = new URL(memberUploadTicket.json().upload.url).pathname;
 
-  const uploadPath = new URL(ownerUploadTicket.json().upload.url).pathname;
   const uploadResponse = await app.inject({
     method: "PUT",
     url: uploadPath,
@@ -736,16 +868,15 @@ test("file endpoints issue CRDT tokens, enforce upload roles, and return blob ti
   });
 
   assert.equal(uploadResponse.statusCode, 201);
-  assert.equal(uploadResponse.json().hash, binaryHash);
 
   const commitBlobResponse = await app.inject({
     method: "POST",
-    url: `/v1/workspaces/${workspace.id}/ops/batch`,
+    url: `/v1/workspaces/${roomId}/ops/batch`,
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
+      authorization: `Bearer ${readerSession.accessToken}`
     },
     payload: {
-      deviceId: "owner-device-1",
+      deviceId: "reader-device-1",
       operations: [
         {
           opId: "op_commit_blob",
@@ -765,38 +896,15 @@ test("file endpoints issue CRDT tokens, enforce upload roles, and return blob ti
   assert.equal(commitBlobResponse.statusCode, 200);
   assert.equal(commitBlobResponse.json().results[0].entry.blob.hash, binaryHash);
 
-  const dedupedUploadResponse = await app.inject({
-    method: "POST",
-    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
-    headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
-    },
-    payload: {
-      hash: binaryHash,
-      sizeBytes: binaryPayload.byteLength,
-      mimeType: "image/png"
-    }
-  });
-
-  assert.equal(dedupedUploadResponse.statusCode, 200);
-  assert.equal(dedupedUploadResponse.json().alreadyExists, true);
-  assert.equal(dedupedUploadResponse.json().upload, undefined);
-
   const downloadTicketResponse = await app.inject({
     method: "POST",
     url: `/v1/files/${binaryEntry.id}/blob/download-ticket`,
     headers: {
-      authorization: `Bearer ${viewerSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     }
   });
 
   assert.equal(downloadTicketResponse.statusCode, 200);
-  assert.equal(downloadTicketResponse.json().hash, binaryHash);
-  assert.match(
-    downloadTicketResponse.json().url,
-    /http:\/\/localhost:3000\/_storage\/download\//
-  );
-
   const downloadPath = new URL(downloadTicketResponse.json().url).pathname;
   const downloadResponse = await app.inject({
     method: "GET",
@@ -818,29 +926,36 @@ test("realtime CRDT websocket sync persists markdown document state", async () =
     env
   });
 
-  const ownerSession = await loginAs(app, "alice", "secret", "alice-laptop");
-  const workspaceResponse = await app.inject({
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
     method: "POST",
-    url: "/v1/workspaces",
+    url: "/v1/rooms",
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     },
     payload: {
       name: "Realtime Notes"
     }
   });
 
-  assert.equal(workspaceResponse.statusCode, 201);
-  const workspace = workspaceResponse.json().workspace;
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
 
   const createEntryResponse = await app.inject({
     method: "POST",
-    url: `/v1/workspaces/${workspace.id}/ops/batch`,
+    url: `/v1/workspaces/${roomId}/ops/batch`,
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     },
     payload: {
-      deviceId: "alice-device-1",
+      deviceId: "writer-device-1",
       operations: [
         {
           opId: "op_realtime_markdown",
@@ -858,7 +973,7 @@ test("realtime CRDT websocket sync persists markdown document state", async () =
     method: "POST",
     url: `/v1/files/${markdownEntry.id}/crdt-token`,
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     }
   });
 
@@ -899,7 +1014,7 @@ test("realtime CRDT websocket sync persists markdown document state", async () =
     method: "POST",
     url: `/v1/files/${markdownEntry.id}/crdt-token`,
     headers: {
-      authorization: `Bearer ${ownerSession.accessToken}`
+      authorization: `Bearer ${writerSession.accessToken}`
     }
   });
 

@@ -8,8 +8,7 @@ import {
   CrdtTokenRecord,
   FileEntry,
   Membership,
-  User,
-  WorkspaceRole
+  User
 } from "../domain/types";
 import { MemoryState, StoredWorkspace } from "./memory-state";
 import { StateStore } from "./state-store";
@@ -88,7 +87,6 @@ export class FileService {
     mimeType: string
   ): Promise<BlobUploadResponse> {
     const context = this.requireEntryAccess(actor.id, entryId);
-    this.assertCanWrite(context.membership.role);
     this.assertBinaryEntry(context.entry);
     this.assertSha256Hash(hash);
 
@@ -179,12 +177,6 @@ export class FileService {
   private assertBinaryEntry(entry: FileEntry): void {
     if (entry.deleted || entry.kind !== "binary") {
       throw new AppError(404, "entry_not_found", "Binary entry not found.");
-    }
-  }
-
-  private assertCanWrite(role: WorkspaceRole): void {
-    if (role === "viewer") {
-      throw new AppError(403, "forbidden", "Editor access is required.");
     }
   }
 

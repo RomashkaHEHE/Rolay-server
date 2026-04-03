@@ -1,11 +1,12 @@
-export type WorkspaceRole = "owner" | "editor" | "viewer";
-export type InviteRole = "editor" | "viewer";
+export type GlobalRole = "admin" | "writer" | "reader";
+export type WorkspaceRole = "owner" | "member";
 
 export interface User {
   id: string;
   username: string;
   displayName: string;
   isAdmin: boolean;
+  globalRole: GlobalRole;
 }
 
 export interface StoredUser extends User {
@@ -48,14 +49,10 @@ export interface Membership {
   joinedAt: string;
 }
 
-export interface Invite {
-  id: string;
-  workspaceId: string;
+export interface WorkspaceInvite {
   code: string;
-  role: InviteRole;
-  expiresAt?: string;
-  maxUses?: number;
-  usedCount: number;
+  enabled: boolean;
+  updatedAt: string;
 }
 
 export type FileKind = "folder" | "markdown" | "binary";

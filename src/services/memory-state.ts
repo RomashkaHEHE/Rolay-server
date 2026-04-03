@@ -6,14 +6,15 @@ import {
   CrdtTokenRecord,
   DeviceSession,
   FileEntry,
-  Invite,
   Membership,
   OperationResult,
   RefreshTokenRecord,
   StoredUser,
   Workspace,
+  WorkspaceInvite,
   WorkspaceEvent
 } from "../domain/types";
+import { createInviteCode } from "../core/ids";
 
 export type WorkspaceEventListener = (event: WorkspaceEvent) => void;
 
@@ -22,7 +23,8 @@ export interface StoredWorkspaceSnapshot {
   createdBy: string;
   createdAt: string;
   memberships: Membership[];
-  invites: Invite[];
+  invite?: WorkspaceInvite;
+  invites?: Array<{ code: string }>;
   entries: FileEntry[];
   events: WorkspaceEvent[];
   nextEventSeq: number;
@@ -30,7 +32,7 @@ export interface StoredWorkspaceSnapshot {
 }
 
 export interface MemoryStateSnapshot {
-  version: 1;
+  version: 1 | 2;
   users: StoredUser[];
   devices: DeviceSession[];
   accessTokens: AccessTokenRecord[];
@@ -47,7 +49,7 @@ export interface StoredWorkspace {
   createdBy: string;
   createdAt: string;
   memberships: Map<string, Membership>;
-  invites: Map<string, Invite>;
+  invite: WorkspaceInvite;
   entries: Map<string, FileEntry>;
   events: WorkspaceEvent[];
   nextEventSeq: number;
@@ -62,7 +64,6 @@ export class MemoryState {
   public readonly accessTokens = new Map<string, AccessTokenRecord>();
   public readonly refreshTokens = new Map<string, RefreshTokenRecord>();
   public readonly workspaces = new Map<string, StoredWorkspace>();
-  public readonly invitesByCode = new Map<string, Invite>();
   public readonly blobObjects = new Map<string, BlobObject>();
   public readonly crdtTokens = new Map<string, CrdtTokenRecord>();
   public readonly blobUploadTickets = new Map<string, BlobUploadTicketRecord>();
@@ -96,6 +97,7 @@ export class MemoryState {
     }
 
     for (const workspaceSnapshot of snapshot.workspaces) {
+      const legacyInviteCode = workspaceSnapshot.invites?.[0]?.code;
       const workspace: StoredWorkspace = {
         workspace: workspaceSnapshot.workspace,
         createdBy: workspaceSnapshot.createdBy,
@@ -103,9 +105,11 @@ export class MemoryState {
         memberships: new Map(
           workspaceSnapshot.memberships.map((membership) => [membership.userId, membership])
         ),
-        invites: new Map(
-          workspaceSnapshot.invites.map((invite) => [invite.id, invite])
-        ),
+        invite: workspaceSnapshot.invite ?? {
+          code: legacyInviteCode ?? createInviteCode(),
+          enabled: true,
+          updatedAt: workspaceSnapshot.createdAt
+        },
         entries: new Map(
           workspaceSnapshot.entries.map((entry) => [entry.id, entry])
         ),
@@ -118,9 +122,6 @@ export class MemoryState {
       };
 
       state.workspaces.set(workspace.workspace.id, workspace);
-      for (const invite of workspace.invites.values()) {
-        state.invitesByCode.set(invite.code, invite);
-      }
     }
 
     for (const blobObject of snapshot.blobObjects) {
@@ -144,7 +145,7 @@ export class MemoryState {
 
   toSnapshot(): MemoryStateSnapshot {
     return {
-      version: 1,
+      version: 2,
       users: [...this.users.values()].map((user) => ({
         ...user,
         isAdmin: Boolean(user.isAdmin)
@@ -157,7 +158,7 @@ export class MemoryState {
         createdBy: workspace.createdBy,
         createdAt: workspace.createdAt,
         memberships: [...workspace.memberships.values()],
-        invites: [...workspace.invites.values()],
+        invite: workspace.invite,
         entries: [...workspace.entries.values()],
         events: [...workspace.events],
         nextEventSeq: workspace.nextEventSeq,

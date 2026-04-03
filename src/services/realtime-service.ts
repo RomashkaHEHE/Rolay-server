@@ -125,7 +125,7 @@ export class RealtimeService {
       tokenRecord.userId
     );
 
-    connectionConfig.readOnly = context.membership.role === "viewer";
+    connectionConfig.readOnly = false;
     return {
       userId: tokenRecord.userId,
       workspaceId: context.workspace.workspace.id,

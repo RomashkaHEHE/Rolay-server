@@ -9,6 +9,7 @@ import Fastify, {
 import { AppEnv, readEnv } from "./config/env";
 import { createRolayContext } from "./core/context";
 import { isAppError } from "./core/errors";
+import adminRoutes from "./modules/admin/admin.routes";
 import authRoutes from "./modules/auth/auth.routes";
 import filesRoutes from "./modules/files/files.routes";
 import invitesRoutes from "./modules/invites/invites.routes";
@@ -73,6 +74,7 @@ export async function buildApp(
   await app.register(rootRoutes);
   await app.register(systemRoutes);
   await app.register(authRoutes);
+  await app.register(adminRoutes);
   await app.register(invitesRoutes);
   await app.register(workspacesRoutes);
   await app.register(treeRoutes);

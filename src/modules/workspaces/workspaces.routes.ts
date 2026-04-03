@@ -1,10 +1,17 @@
-import { FastifyPluginAsync } from "fastify";
+import { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 
 import { requireAuth } from "../../core/http-auth";
 import { asObject, optionalString, requireString } from "../../core/validation";
 
 const workspacesRoutes: FastifyPluginAsync = async (app) => {
-  app.post("/v1/workspaces", async (request, reply) => {
+  const listWorkspaces = async (request: FastifyRequest) => {
+    const principal = requireAuth(app, request);
+    return {
+      workspaces: app.rolay.workspaces.listUserWorkspaces(principal.user)
+    };
+  };
+
+  const createWorkspace = async (request: FastifyRequest, reply: FastifyReply) => {
     const principal = requireAuth(app, request);
     const body = asObject(request.body);
     const workspace = await app.rolay.workspaces.createWorkspace(
@@ -17,6 +24,17 @@ const workspacesRoutes: FastifyPluginAsync = async (app) => {
     return {
       workspace
     };
+  };
+
+  app.get("/v1/workspaces", listWorkspaces);
+  app.get("/v1/rooms", listWorkspaces);
+
+  app.post("/v1/workspaces", async (request, reply) => {
+    return createWorkspace(request, reply);
+  });
+
+  app.post("/v1/rooms", async (request, reply) => {
+    return createWorkspace(request, reply);
   });
 };
 
