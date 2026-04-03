@@ -1,0 +1,702 @@
+openapi: 3.1.0
+info:
+  title: Rolay Server API
+  version: 0.1.0
+  description: >
+    HTTP contract for Rolay v1. This specification covers authentication,
+    workspace tree synchronization, blob tickets, and CRDT session bootstrap.
+    The Yjs-compatible realtime websocket protocol is described in docs/protocol.md.
+servers:
+  - url: https://rolay.example.com
+    description: Production
+  - url: http://localhost:3000
+    description: Local development
+tags:
+  - name: auth
+  - name: workspaces
+  - name: invites
+  - name: tree
+  - name: files
+paths:
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Login
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh session tokens
+      operationId: refreshSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Refresh success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/workspaces:
+    post:
+      tags: [workspaces]
+      summary: Create workspace
+      operationId: createWorkspace
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '201':
+          description: Workspace created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/invites/accept:
+    post:
+      tags: [invites]
+      summary: Accept workspace invite
+      operationId: acceptInvite
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptInviteRequest'
+      responses:
+        '200':
+          description: Invite accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/invites:
+    post:
+      tags: [invites]
+      summary: Create invite for workspace
+      operationId: createInvite
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInviteRequest'
+      responses:
+        '201':
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/tree:
+    get:
+      tags: [tree]
+      summary: Get workspace tree snapshot
+      operationId: getWorkspaceTree
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Tree snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TreeSnapshotResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/ops/batch:
+    post:
+      tags: [tree]
+      summary: Apply file tree operations
+      operationId: applyTreeOperations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchOperationsRequest'
+      responses:
+        '200':
+          description: Operation results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchOperationsResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '409':
+          description: At least one operation conflicted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchOperationsResponse'
+  /v1/workspaces/{workspaceId}/events:
+    get:
+      tags: [tree]
+      summary: Subscribe to workspace events
+      operationId: streamWorkspaceEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Resume event stream from the next sequence after this cursor.
+      responses:
+        '200':
+          description: Server-sent event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  id: 185
+                  event: tree.entry.updated
+                  data: {"entryId":"fil_01","path":"Algebra/Week-01.md","entryVersion":6}
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/files/{entryId}/crdt-token:
+    post:
+      tags: [files]
+      summary: Create short-lived CRDT token for markdown file
+      operationId: createCrdtToken
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+      responses:
+        '200':
+          description: CRDT session bootstrap
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CrdtTokenResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/files/{entryId}/blob/upload-ticket:
+    post:
+      tags: [files]
+      summary: Create upload ticket for binary file revision
+      operationId: createBlobUploadTicket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlobUploadTicketRequest'
+      responses:
+        '200':
+          description: Upload ticket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobUploadTicketResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/files/{entryId}/blob/download-ticket:
+    post:
+      tags: [files]
+      summary: Create download ticket for current binary file revision
+      operationId: createBlobDownloadTicket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+      responses:
+        '200':
+          description: Download ticket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobDownloadTicketResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Workspace identifier.
+    EntryId:
+      name: entryId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Stable file entry identifier.
+  responses:
+    ErrorUnauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorForbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorNotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password, deviceName]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        deviceName:
+          type: string
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, refreshToken, user]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+    RefreshResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, refreshToken]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, username, displayName]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+    Workspace:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        name:
+          type: string
+    WorkspaceResponse:
+      type: object
+      additionalProperties: false
+      required: [workspace]
+      properties:
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+    CreateWorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+    AcceptInviteRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+    CreateInviteRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum: [editor, viewer]
+          default: editor
+        expiresAt:
+          type: string
+          format: date-time
+        maxUses:
+          type: integer
+          minimum: 1
+      required: [role]
+    InviteResponse:
+      type: object
+      additionalProperties: false
+      required: [invite]
+      properties:
+        invite:
+          $ref: '#/components/schemas/Invite'
+    Invite:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, code, role]
+      properties:
+        id:
+          type: string
+        workspaceId:
+          type: string
+        code:
+          type: string
+        role:
+          type: string
+          enum: [editor, viewer]
+        expiresAt:
+          type: string
+          format: date-time
+        maxUses:
+          type: integer
+        usedCount:
+          type: integer
+    TreeSnapshotResponse:
+      type: object
+      additionalProperties: false
+      required: [workspace, cursor, entries]
+      properties:
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+        cursor:
+          type: integer
+          minimum: 0
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileEntry'
+    FileEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - path
+        - kind
+        - contentMode
+        - entryVersion
+        - deleted
+        - updatedAt
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+        kind:
+          type: string
+          enum: [folder, markdown, binary]
+        contentMode:
+          type: string
+          enum: [none, crdt, blob]
+        entryVersion:
+          type: integer
+          minimum: 0
+        docId:
+          type: string
+        mimeType:
+          type: string
+        blob:
+          $ref: '#/components/schemas/BlobRevision'
+        deleted:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+    BlobRevision:
+      type: object
+      additionalProperties: false
+      required: [hash, sizeBytes, mimeType]
+      properties:
+        hash:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        mimeType:
+          type: string
+    BatchOperationsRequest:
+      type: object
+      additionalProperties: false
+      required: [deviceId, operations]
+      properties:
+        deviceId:
+          type: string
+        operations:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TreeOperation'
+    TreeOperation:
+      type: object
+      additionalProperties: false
+      required: [opId, type]
+      properties:
+        opId:
+          type: string
+        type:
+          type: string
+          enum:
+            - create_folder
+            - create_markdown
+            - create_binary_placeholder
+            - rename_entry
+            - move_entry
+            - delete_entry
+            - restore_entry
+            - commit_blob_revision
+        path:
+          type: string
+        entryId:
+          type: string
+        newPath:
+          type: string
+        hash:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        mimeType:
+          type: string
+        preconditions:
+          $ref: '#/components/schemas/OperationPreconditions'
+    OperationPreconditions:
+      type: object
+      additionalProperties: false
+      properties:
+        entryVersion:
+          type: integer
+          minimum: 0
+        path:
+          type: string
+    BatchOperationsResponse:
+      type: object
+      additionalProperties: false
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperationResult'
+    OperationResult:
+      type: object
+      additionalProperties: false
+      required: [opId, status]
+      properties:
+        opId:
+          type: string
+        status:
+          type: string
+          enum: [applied, conflict, rejected]
+        eventSeq:
+          type: integer
+          minimum: 0
+        reason:
+          type: string
+        entry:
+          $ref: '#/components/schemas/FileEntry'
+        serverEntry:
+          $ref: '#/components/schemas/FileEntry'
+        suggestedPath:
+          type: string
+    CrdtTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [entryId, docId, provider, wsUrl, token, expiresAt]
+      properties:
+        entryId:
+          type: string
+        docId:
+          type: string
+        provider:
+          type: string
+          example: yjs-hocuspocus
+        wsUrl:
+          type: string
+          format: uri
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    BlobUploadTicketRequest:
+      type: object
+      additionalProperties: false
+      required: [hash, sizeBytes, mimeType]
+      properties:
+        hash:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        mimeType:
+          type: string
+    BlobUploadTicketResponse:
+      type: object
+      additionalProperties: false
+      required: [alreadyExists]
+      properties:
+        alreadyExists:
+          type: boolean
+        upload:
+          $ref: '#/components/schemas/UploadTarget'
+    UploadTarget:
+      type: object
+      additionalProperties: false
+      required: [method, url, headers]
+      properties:
+        method:
+          type: string
+          enum: [PUT, POST]
+        url:
+          type: string
+          format: uri
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+    BlobDownloadTicketResponse:
+      type: object
+      additionalProperties: false
+      required: [hash, url]
+      properties:
+        hash:
+          type: string
+        url:
+          type: string
+          format: uri
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorObject'
+    ErrorObject:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          examples:
+            - unauthorized
+            - forbidden
+            - workspace_not_found
+            - entry_not_found
+            - path_already_exists
+            - entry_version_mismatch
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true

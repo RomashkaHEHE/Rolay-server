@@ -1,0 +1,32 @@
+{
+  "name": "rolay-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rolay server skeleton for realtime markdown collaboration and file sync.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test test/app.test.ts"
+  },
+  "dependencies": {
+    "@hocuspocus/provider": "^3.4.4",
+    "@hocuspocus/server": "^3.4.4",
+    "fastify": "^5.0.0",
+    "minio": "^8.0.7",
+    "pg": "^8.20.0",
+    "ws": "^8.20.0",
+    "yjs": "^13.6.30"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.20.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rolay}
+      POSTGRES_USER: ${POSTGRES_USER:-rolay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - rolay-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rolay} -d ${POSTGRES_DB:-rolay}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - rolay-minio:/data
+    ports:
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+
+  rolay-server:
+    image: ${ROLAY_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      STATE_DRIVER: ${STATE_DRIVER:-postgres}
+      POSTGRES_URL: ${POSTGRES_URL:-postgresql://rolay:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-rolay}}
+      POSTGRES_STATE_KEY: ${POSTGRES_STATE_KEY:-default}
+      DEV_AUTH_USERNAME: ${DEV_AUTH_USERNAME:-dev}
+      DEV_AUTH_PASSWORD: ${DEV_AUTH_PASSWORD}
+      DEV_AUTH_DISPLAY_NAME: ${DEV_AUTH_DISPLAY_NAME:-Development User}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      CRDT_PROVIDER: ${CRDT_PROVIDER:-yjs-hocuspocus}
+      CRDT_WS_URL: ${CRDT_WS_URL}
+      CRDT_TOKEN_TTL_SECONDS: ${CRDT_TOKEN_TTL_SECONDS:-300}
+      CRDT_STORE_DEBOUNCE_MS: ${CRDT_STORE_DEBOUNCE_MS:-1000}
+      CRDT_STORE_MAX_DEBOUNCE_MS: ${CRDT_STORE_MAX_DEBOUNCE_MS:-5000}
+      BLOB_TICKET_TTL_SECONDS: ${BLOB_TICKET_TTL_SECONDS:-900}
+      BLOB_UPLOAD_BASE_URL: ${BLOB_UPLOAD_BASE_URL}
+      BLOB_DOWNLOAD_BASE_URL: ${BLOB_DOWNLOAD_BASE_URL}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-minio}
+      LOCAL_DATA_DIR: ${LOCAL_DATA_DIR:-.rolay-data}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-rolay}
+      MINIO_REGION: ${MINIO_REGION:-}
+      MINIO_PREFIX: ${MINIO_PREFIX:-rolay}
+    ports:
+      - "${PORT:-3000}:3000"
+
+volumes:
+  rolay-postgres:
+  rolay-minio:
