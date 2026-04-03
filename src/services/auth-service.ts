@@ -20,6 +20,13 @@ interface SeedUserInput {
   username: string;
   password: string;
   displayName: string;
+  isAdmin?: boolean;
+}
+
+interface CreateUserInput {
+  username: string;
+  password: string;
+  displayName?: string;
 }
 
 interface SessionBundle {
@@ -39,7 +46,8 @@ export class AuthService {
     const changed = this.seedUser({
       username: this.env.devAuthUsername,
       password: this.env.devAuthPassword,
-      displayName: this.env.devAuthDisplayName
+      displayName: this.env.devAuthDisplayName,
+      isAdmin: true
     });
 
     if (changed) {
@@ -66,6 +74,44 @@ export class AuthService {
     return this.toUser(user);
   }
 
+  async createUser(actor: User, input: CreateUserInput): Promise<User> {
+    this.assertAdmin(actor);
+
+    if (this.state.usersByUsername.has(input.username)) {
+      throw new AppError(409, "username_taken", "Username is already taken.");
+    }
+
+    const now = new Date().toISOString();
+    const user: StoredUser = {
+      id: createId("usr"),
+      username: input.username,
+      displayName: input.displayName ?? input.username,
+      isAdmin: false,
+      passwordHash: hashPassword(input.password),
+      createdAt: now
+    };
+
+    this.state.users.set(user.id, user);
+    this.state.usersByUsername.set(user.username, user.id);
+    await this.stateStore.saveState(this.state);
+    return this.toUser(user);
+  }
+
+  async updateDisplayName(userId: string, displayName: string): Promise<User> {
+    const user = this.state.users.get(userId);
+    if (!user || user.disabledAt) {
+      throw new AppError(404, "user_not_found", "User was not found.");
+    }
+
+    if (user.displayName === displayName) {
+      return this.toUser(user);
+    }
+
+    user.displayName = displayName;
+    await this.stateStore.saveState(this.state);
+    return this.toUser(user);
+  }
+
   private seedUser(input: SeedUserInput): boolean {
     const existingUserId = this.state.usersByUsername.get(input.username);
     if (existingUserId) {
@@ -76,10 +122,13 @@ export class AuthService {
 
       const nextPasswordHash = hashPassword(input.password);
       const changed =
-        existing.displayName !== input.displayName || existing.passwordHash !== nextPasswordHash;
+        existing.displayName !== input.displayName ||
+        existing.passwordHash !== nextPasswordHash ||
+        existing.isAdmin !== Boolean(input.isAdmin);
 
       existing.displayName = input.displayName;
       existing.passwordHash = nextPasswordHash;
+      existing.isAdmin = Boolean(input.isAdmin);
       return changed;
     }
 
@@ -88,6 +137,7 @@ export class AuthService {
       id: createId("usr"),
       username: input.username,
       displayName: input.displayName,
+      isAdmin: Boolean(input.isAdmin),
       passwordHash: hashPassword(input.password),
       createdAt: now
     };
@@ -221,11 +271,18 @@ export class AuthService {
     return Date.parse(expiresAt) <= Date.now();
   }
 
+  private assertAdmin(user: User): void {
+    if (!user.isAdmin) {
+      throw new AppError(403, "forbidden", "Admin access is required.");
+    }
+  }
+
   private toUser(user: StoredUser): User {
     return {
       id: user.id,
       username: user.username,
-      displayName: user.displayName
+      displayName: user.displayName,
+      isAdmin: user.isAdmin
     };
   }
 }

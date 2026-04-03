@@ -106,6 +106,7 @@ test("memory state snapshot round-trip preserves persisted records", async () =>
     id: "usr_1",
     username: "alice",
     displayName: "Alice",
+    isAdmin: true,
     passwordHash: "hash",
     createdAt: "2026-01-01T00:00:00.000Z"
   };
@@ -272,7 +273,8 @@ test("auth login and refresh issue opaque bearer tokens", async () => {
   assert.deepEqual(login.json().user, {
     id: login.json().user.id,
     username: "alice",
-    displayName: "Alice"
+    displayName: "Alice",
+    isAdmin: true
   });
 
   const refresh = await app.inject({
@@ -473,6 +475,110 @@ test("workspace flow supports invites, tree ops, folder moves, and conflicts", a
   assert.equal(conflictResponse.statusCode, 409);
   assert.equal(conflictResponse.json().results[0].status, "conflict");
   assert.equal(conflictResponse.json().results[0].reason, "entry_version_mismatch");
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("admin can create managed users and users can update their display name", async () => {
+  const env = createTestEnv({
+    devAuthUsername: "admin",
+    devAuthPassword: "secret",
+    devAuthDisplayName: "Admin User"
+  });
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  const adminSession = await loginAs(app, "admin", "secret", "admin-laptop");
+
+  const createUserResponse = await app.inject({
+    method: "POST",
+    url: "/v1/admin/users",
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    },
+    payload: {
+      username: "student1",
+      password: "student-secret"
+    }
+  });
+
+  assert.equal(createUserResponse.statusCode, 201);
+  assert.deepEqual(createUserResponse.json().user, {
+    id: createUserResponse.json().user.id,
+    username: "student1",
+    displayName: "student1",
+    isAdmin: false
+  });
+
+  const studentSession = await loginAs(app, "student1", "student-secret", "student-laptop");
+  assert.equal(studentSession.accessToken.length > 0, true);
+
+  const meResponse = await app.inject({
+    method: "GET",
+    url: "/v1/auth/me",
+    headers: {
+      authorization: `Bearer ${studentSession.accessToken}`
+    }
+  });
+
+  assert.equal(meResponse.statusCode, 200);
+  assert.deepEqual(meResponse.json().user, {
+    id: meResponse.json().user.id,
+    username: "student1",
+    displayName: "student1",
+    isAdmin: false
+  });
+
+  const updateProfileResponse = await app.inject({
+    method: "PATCH",
+    url: "/v1/auth/me/profile",
+    headers: {
+      authorization: `Bearer ${studentSession.accessToken}`
+    },
+    payload: {
+      displayName: "Student One"
+    }
+  });
+
+  assert.equal(updateProfileResponse.statusCode, 200);
+  assert.deepEqual(updateProfileResponse.json().user, {
+    id: updateProfileResponse.json().user.id,
+    username: "student1",
+    displayName: "Student One",
+    isAdmin: false
+  });
+
+  const duplicateUserResponse = await app.inject({
+    method: "POST",
+    url: "/v1/admin/users",
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    },
+    payload: {
+      username: "student1",
+      password: "another-secret"
+    }
+  });
+
+  assert.equal(duplicateUserResponse.statusCode, 409);
+  assert.equal(duplicateUserResponse.json().error.code, "username_taken");
+
+  const nonAdminCreateResponse = await app.inject({
+    method: "POST",
+    url: "/v1/admin/users",
+    headers: {
+      authorization: `Bearer ${studentSession.accessToken}`
+    },
+    payload: {
+      username: "student2",
+      password: "student-secret"
+    }
+  });
+
+  assert.equal(nonAdminCreateResponse.statusCode, 403);
 
   await app.close();
   await cleanupTestEnv(env);

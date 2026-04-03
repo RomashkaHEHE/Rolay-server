@@ -13,6 +13,7 @@ servers:
     description: Local development
 tags:
   - name: auth
+  - name: admin
   - name: workspaces
   - name: invites
   - name: tree
@@ -58,6 +59,70 @@ paths:
                 $ref: '#/components/schemas/RefreshResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/auth/me:
+    get:
+      tags: [auth]
+      summary: Get current authenticated user
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/auth/me/profile:
+    patch:
+      tags: [auth]
+      summary: Update current user profile
+      operationId: updateCurrentUserProfile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/admin/users:
+    post:
+      tags: [admin]
+      summary: Create managed user account
+      operationId: createManagedUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateManagedUserRequest'
+      responses:
+        '201':
+          description: User account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
   /v1/workspaces:
     post:
       tags: [workspaces]
@@ -333,6 +398,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    ErrorConflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
     LoginRequest:
       type: object
@@ -373,10 +444,29 @@ components:
           type: string
         refreshToken:
           type: string
+    CreateManagedUserRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        displayName:
+          type: string
+    UpdateProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
     User:
       type: object
       additionalProperties: false
-      required: [id, username, displayName]
+      required: [id, username, displayName, isAdmin]
       properties:
         id:
           type: string
@@ -384,6 +474,15 @@ components:
           type: string
         displayName:
           type: string
+        isAdmin:
+          type: boolean
+    UserResponse:
+      type: object
+      additionalProperties: false
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
     Workspace:
       type: object
       additionalProperties: false
@@ -695,6 +794,7 @@ components:
             - entry_not_found
             - path_already_exists
             - entry_version_mismatch
+            - username_taken
         message:
           type: string
         details:

@@ -6,6 +6,8 @@ workspace tree sync, and blob-based attachment storage.
 ## Current status
 
 - live auth endpoints: `POST /v1/auth/login`, `POST /v1/auth/refresh`
+- live auth endpoints: `GET /v1/auth/me`, `PATCH /v1/auth/me/profile`
+- live admin endpoint: `POST /v1/admin/users`
 - live workspace endpoints: `POST /v1/workspaces`, `POST /v1/invites/accept`
 - live invite endpoint: `POST /v1/workspaces/:workspaceId/invites`
 - live tree endpoints: `GET /v1/workspaces/:workspaceId/tree`
@@ -43,6 +45,14 @@ Default dev auth:
 - username: `dev`
 - password: `dev-password`
 - display name: `Development User`
+- role: `admin`
+
+Managed accounts:
+
+- there is no public self-registration in `v1`
+- the seeded dev user is an admin and can create other accounts via `POST /v1/admin/users`
+- created users are non-admin by default
+- every user can change their own `displayName` via `PATCH /v1/auth/me/profile`
 
 ## Runtime expectations
 

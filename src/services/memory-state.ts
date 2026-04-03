@@ -75,8 +75,12 @@ export class MemoryState {
     }
 
     for (const user of snapshot.users) {
-      state.users.set(user.id, user);
-      state.usersByUsername.set(user.username, user.id);
+      const normalizedUser: StoredUser = {
+        ...user,
+        isAdmin: Boolean(user.isAdmin)
+      };
+      state.users.set(normalizedUser.id, normalizedUser);
+      state.usersByUsername.set(normalizedUser.username, normalizedUser.id);
     }
 
     for (const device of snapshot.devices) {
@@ -141,7 +145,10 @@ export class MemoryState {
   toSnapshot(): MemoryStateSnapshot {
     return {
       version: 1,
-      users: [...this.users.values()],
+      users: [...this.users.values()].map((user) => ({
+        ...user,
+        isAdmin: Boolean(user.isAdmin)
+      })),
       devices: [...this.devices.values()],
       accessTokens: [...this.accessTokens.values()],
       refreshTokens: [...this.refreshTokens.values()],

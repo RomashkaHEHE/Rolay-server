@@ -5,6 +5,7 @@ export interface User {
   id: string;
   username: string;
   displayName: string;
+  isAdmin: boolean;
 }
 
 export interface StoredUser extends User {

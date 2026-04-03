@@ -24,3 +24,15 @@ export function requireAuth(
   const token = getBearerToken(request);
   return app.rolay.auth.authenticateAccessToken(token);
 }
+
+export function requireAdmin(
+  app: FastifyInstance,
+  request: FastifyRequest
+): AuthPrincipal {
+  const principal = requireAuth(app, request);
+  if (!principal.user.isAdmin) {
+    throw new AppError(403, "forbidden", "Admin access is required.");
+  }
+
+  return principal;
+}
