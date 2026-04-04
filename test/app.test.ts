@@ -60,6 +60,12 @@ function createSha256Hash(payload: Buffer): string {
   return `sha256:${createHash("sha256").update(payload).digest("base64")}`;
 }
 
+function decodeCrdtBootstrapState(state: string): Y.Doc {
+  const document = new Y.Doc();
+  Y.applyUpdate(document, Buffer.from(state, "base64"));
+  return document;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -1045,6 +1051,139 @@ test("realtime CRDT websocket sync persists markdown document state", async () =
 
   providerA.destroy();
   providerB.destroy();
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("markdown bootstrap endpoint returns current stored Yjs state for workspace markdown files", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Offline Bootstrap Notes"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntriesResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_bootstrap_markdown_a",
+          type: "create_markdown",
+          path: "Week-01.md"
+        },
+        {
+          opId: "op_bootstrap_markdown_b",
+          type: "create_markdown",
+          path: "Week-02.md"
+        },
+        {
+          opId: "op_bootstrap_binary",
+          type: "create_binary_placeholder",
+          path: "attachments/diagram.png"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntriesResponse.statusCode, 200);
+  const firstMarkdownEntry = createEntriesResponse.json().results[0].entry;
+  const secondMarkdownEntry = createEntriesResponse.json().results[1].entry;
+  const binaryEntry = createEntriesResponse.json().results[2].entry;
+
+  const firstDoc = new Y.Doc();
+  firstDoc.getText("content").insert(0, "123hello");
+  await app.rolay.storage.storeDocument(firstMarkdownEntry.docId, Y.encodeStateAsUpdate(firstDoc));
+
+  const bootstrapAllResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/markdown/bootstrap`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(bootstrapAllResponse.statusCode, 200);
+  assert.equal(bootstrapAllResponse.json().workspaceId, roomId);
+  assert.equal(bootstrapAllResponse.json().encoding, "base64");
+  assert.equal(bootstrapAllResponse.json().documents.length, 2);
+
+  const bootstrapAllDocuments = bootstrapAllResponse.json().documents;
+  const bootstrappedFirst = bootstrapAllDocuments.find(
+    (document: { entryId: string }) => document.entryId === firstMarkdownEntry.id
+  );
+  const bootstrappedSecond = bootstrapAllDocuments.find(
+    (document: { entryId: string }) => document.entryId === secondMarkdownEntry.id
+  );
+
+  assert.ok(bootstrappedFirst);
+  assert.ok(bootstrappedSecond);
+  assert.equal(
+    decodeCrdtBootstrapState(bootstrappedFirst.state).getText("content").toString(),
+    "123hello"
+  );
+  assert.equal(
+    decodeCrdtBootstrapState(bootstrappedSecond.state).getText("content").toString(),
+    ""
+  );
+
+  const bootstrapSubsetResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/markdown/bootstrap`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      entryIds: [secondMarkdownEntry.id, firstMarkdownEntry.id, firstMarkdownEntry.id]
+    }
+  });
+
+  assert.equal(bootstrapSubsetResponse.statusCode, 200);
+  assert.deepEqual(
+    bootstrapSubsetResponse.json().documents.map((document: { entryId: string }) => document.entryId),
+    [secondMarkdownEntry.id, firstMarkdownEntry.id]
+  );
+
+  const invalidBootstrapResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/markdown/bootstrap`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      entryIds: [binaryEntry.id]
+    }
+  });
+
+  assert.equal(invalidBootstrapResponse.statusCode, 404);
+  assert.equal(invalidBootstrapResponse.json().error.code, "entry_not_found");
+
   await app.close();
   await cleanupTestEnv(env);
 });

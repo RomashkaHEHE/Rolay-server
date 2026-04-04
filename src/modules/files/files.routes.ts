@@ -1,7 +1,9 @@
 import { FastifyPluginAsync } from "fastify";
 
+import { AppError } from "../../core/errors";
 import { requireAuth } from "../../core/http-auth";
 import {
+  asArray,
   asObject,
   ensureNonNegativeInteger,
   optionalInteger,
@@ -9,7 +11,34 @@ import {
   requireString
 } from "../../core/validation";
 
+function parseEntryIds(value: unknown): string[] {
+  return asArray(value, 'Field "entryIds" must be an array.').map((entryId) => {
+    if (typeof entryId !== "string" || entryId.trim() === "") {
+      throw new AppError(
+        400,
+        "invalid_request",
+        'Field "entryIds" must contain non-empty strings.'
+      );
+    }
+
+    return entryId;
+  });
+}
+
 const filesRoutes: FastifyPluginAsync = async (app) => {
+  app.post("/v1/workspaces/:workspaceId/markdown/bootstrap", async (request) => {
+    const principal = requireAuth(app, request);
+    const params = asObject(request.params, "Expected route params.");
+    const body = request.body === undefined ? {} : asObject(request.body);
+    const entryIds = body.entryIds === undefined ? undefined : parseEntryIds(body.entryIds);
+
+    return app.rolay.files.bootstrapMarkdownDocuments(
+      principal.user,
+      requireString(params, "workspaceId"),
+      entryIds
+    );
+  });
+
   app.post("/v1/files/:entryId/crdt-token", async (request) => {
     const principal = requireAuth(app, request);
     const params = asObject(request.params, "Expected route params.");

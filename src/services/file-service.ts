@@ -13,6 +13,7 @@ import {
 import { MemoryState, StoredWorkspace } from "./memory-state";
 import { StateStore } from "./state-store";
 import { StorageService } from "./storage-service";
+import * as Y from "yjs";
 
 interface EntryAccessContext {
   workspace: StoredWorkspace;
@@ -42,6 +43,20 @@ interface BlobDownloadResponse {
   hash: string;
   url: string;
 }
+
+interface CrdtBootstrapDocument {
+  entryId: string;
+  docId: string;
+  state: string;
+}
+
+interface CrdtBootstrapResponse {
+  workspaceId: string;
+  encoding: "base64";
+  documents: CrdtBootstrapDocument[];
+}
+
+const EMPTY_CRDT_STATE = Y.encodeStateAsUpdate(new Y.Doc());
 
 export class FileService {
   constructor(
@@ -76,6 +91,33 @@ export class FileService {
       wsUrl: this.env.crdtWsUrl,
       token: record.token,
       expiresAt: record.expiresAt
+    };
+  }
+
+  async bootstrapMarkdownDocuments(
+    actor: User,
+    workspaceId: string,
+    entryIds?: string[]
+  ): Promise<CrdtBootstrapResponse> {
+    const workspace = this.requireWorkspaceAccess(actor.id, workspaceId);
+    const entries = this.resolveBootstrapEntries(workspace, entryIds);
+    const documents = await Promise.all(
+      entries.map(async (entry) => {
+        const storedState = await this.storage.loadDocument(entry.docId!);
+        const state = storedState ?? EMPTY_CRDT_STATE;
+
+        return {
+          entryId: entry.id,
+          docId: entry.docId!,
+          state: Buffer.from(state).toString("base64")
+        };
+      })
+    );
+
+    return {
+      workspaceId: workspace.workspace.id,
+      encoding: "base64",
+      documents
     };
   }
 
@@ -152,6 +194,19 @@ export class FileService {
     };
   }
 
+  private requireWorkspaceAccess(userId: string, workspaceId: string): StoredWorkspace {
+    const workspace = this.state.workspaces.get(workspaceId);
+    if (!workspace) {
+      throw new AppError(404, "workspace_not_found", "Workspace not found.");
+    }
+
+    if (!workspace.memberships.has(userId)) {
+      throw new AppError(403, "forbidden", "User is not a workspace member.");
+    }
+
+    return workspace;
+  }
+
   private requireEntryAccess(userId: string, entryId: string): EntryAccessContext {
     for (const workspace of this.state.workspaces.values()) {
       const entry = workspace.entries.get(entryId);
@@ -172,6 +227,41 @@ export class FileService {
     }
 
     throw new AppError(404, "entry_not_found", "Entry not found.");
+  }
+
+  private resolveBootstrapEntries(
+    workspace: StoredWorkspace,
+    entryIds?: string[]
+  ): FileEntry[] {
+    if (!entryIds) {
+      return [...workspace.entries.values()]
+        .filter(
+          (entry) =>
+            !entry.deleted &&
+            entry.kind === "markdown" &&
+            entry.contentMode === "crdt" &&
+            !!entry.docId
+        )
+        .sort((left, right) => left.path.localeCompare(right.path));
+    }
+
+    const resolved: FileEntry[] = [];
+    const seen = new Set<string>();
+    for (const entryId of entryIds) {
+      if (seen.has(entryId)) {
+        continue;
+      }
+      seen.add(entryId);
+
+      const entry = workspace.entries.get(entryId);
+      if (!entry || entry.deleted || entry.kind !== "markdown" || !entry.docId) {
+        throw new AppError(404, "entry_not_found", "Markdown entry not found.");
+      }
+
+      resolved.push(entry);
+    }
+
+    return resolved;
   }
 
   private assertBinaryEntry(entry: FileEntry): void {

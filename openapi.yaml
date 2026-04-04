@@ -611,6 +611,34 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/markdown/bootstrap:
+    post:
+      tags: [files]
+      summary: Bootstrap stored Yjs state for markdown files in a room
+      operationId: bootstrapMarkdownDocuments
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkdownBootstrapRequest'
+      responses:
+        '200':
+          description: Current stored Yjs state for requested markdown files
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkdownBootstrapResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
   /v1/files/{entryId}/crdt-token:
     post:
       tags: [files]
@@ -1182,6 +1210,43 @@ components:
         expiresAt:
           type: string
           format: date-time
+    MarkdownBootstrapRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        entryIds:
+          type: array
+          items:
+            type: string
+          description: >
+            Optional list of markdown entry IDs to bootstrap. When omitted,
+            the server returns all active markdown entries in the room.
+    MarkdownBootstrapDocument:
+      type: object
+      additionalProperties: false
+      required: [entryId, docId, state]
+      properties:
+        entryId:
+          type: string
+        docId:
+          type: string
+        state:
+          type: string
+          description: Base64-encoded full Yjs state update for the document.
+    MarkdownBootstrapResponse:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, encoding, documents]
+      properties:
+        workspaceId:
+          type: string
+        encoding:
+          type: string
+          enum: [base64]
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarkdownBootstrapDocument'
     BlobUploadTicketRequest:
       type: object
       additionalProperties: false

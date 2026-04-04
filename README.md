@@ -23,6 +23,7 @@ room tree sync, and blob-based attachment storage.
 - live tree endpoints: `GET /v1/workspaces/:workspaceId/tree`
 - live tree endpoints: `POST /v1/workspaces/:workspaceId/ops/batch`
 - live event stream: `GET /v1/workspaces/:workspaceId/events` (SSE)
+- live markdown bootstrap: `POST /v1/workspaces/:workspaceId/markdown/bootstrap`
 - live file endpoints: `POST /v1/files/:entryId/crdt-token`
 - live file endpoints: `POST /v1/files/:entryId/blob/upload-ticket`
 - live file endpoints: `POST /v1/files/:entryId/blob/download-ticket`
