@@ -9,6 +9,7 @@ import * as Y from "yjs";
 
 import { buildApp } from "../src/app";
 import { AppEnv } from "../src/config/env";
+import { AuthService } from "../src/services/auth-service";
 import { MemoryState } from "../src/services/memory-state";
 import WebSocket from "ws";
 
@@ -294,6 +295,120 @@ test("auth login and refresh issue opaque bearer tokens with global role", async
 
   await app.close();
   await cleanupTestEnv(env);
+});
+
+test("users can change password when they know the current one", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  const originalSession = await loginAs(app, "alice", "secret", "alice-laptop");
+
+  const changePasswordResponse = await app.inject({
+    method: "PATCH",
+    url: "/v1/auth/me/password",
+    headers: {
+      authorization: `Bearer ${originalSession.accessToken}`
+    },
+    payload: {
+      currentPassword: "secret",
+      newPassword: "secret-2"
+    }
+  });
+
+  assert.equal(changePasswordResponse.statusCode, 200);
+  assert.notEqual(changePasswordResponse.json().accessToken, originalSession.accessToken);
+  assert.notEqual(changePasswordResponse.json().refreshToken, originalSession.refreshToken);
+  assert.equal(changePasswordResponse.json().user.username, "alice");
+
+  const oldRefreshResponse = await app.inject({
+    method: "POST",
+    url: "/v1/auth/refresh",
+    payload: {
+      refreshToken: originalSession.refreshToken
+    }
+  });
+
+  assert.equal(oldRefreshResponse.statusCode, 401);
+  assert.equal(oldRefreshResponse.json().error.code, "invalid_refresh_token");
+
+  const oldPasswordLogin = await app.inject({
+    method: "POST",
+    url: "/v1/auth/login",
+    payload: {
+      username: "alice",
+      password: "secret",
+      deviceName: "alice-laptop-old"
+    }
+  });
+
+  assert.equal(oldPasswordLogin.statusCode, 401);
+
+  const newPasswordLogin = await app.inject({
+    method: "POST",
+    url: "/v1/auth/login",
+    payload: {
+      username: "alice",
+      password: "secret-2",
+      deviceName: "alice-laptop-new"
+    }
+  });
+
+  assert.equal(newPasswordLogin.statusCode, 200);
+
+  const unchangedPasswordResponse = await app.inject({
+    method: "PATCH",
+    url: "/v1/auth/me/password",
+    headers: {
+      authorization: `Bearer ${changePasswordResponse.json().accessToken}`
+    },
+    payload: {
+      currentPassword: "secret-2",
+      newPassword: "secret-2"
+    }
+  });
+
+  assert.equal(unchangedPasswordResponse.statusCode, 400);
+  assert.equal(unchangedPasswordResponse.json().error.code, "password_unchanged");
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("seed admin password is updated when env password changes on startup", async () => {
+  const env = createTestEnv({
+    devAuthUsername: "roma",
+    devAuthPassword: "old-secret",
+    devAuthDisplayName: "Roma"
+  });
+  const state = new MemoryState();
+  const stateStore = {
+    loadState: async () => state,
+    saveState: async (_state: MemoryState) => {},
+    close: async () => {}
+  };
+
+  const auth = new AuthService(state, env, stateStore);
+  await auth.ensureReady();
+  const oldSession = await auth.login("roma", "old-secret", "seed-device");
+  assert.equal(oldSession.user.username, "roma");
+
+  env.devAuthPassword = "new-secret";
+  await auth.ensureReady();
+
+  await assert.rejects(
+    () => auth.login("roma", "old-secret", "seed-device-old"),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "statusCode" in error &&
+      (error as { statusCode?: unknown }).statusCode === 401
+  );
+
+  const newSession = await auth.login("roma", "new-secret", "seed-device-new");
+  assert.equal(newSession.user.username, "roma");
 });
 
 test("writer can create duplicate-named rooms, manage invite key, and members can edit", async () => {

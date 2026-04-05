@@ -155,6 +155,37 @@ export class AuthService {
     return this.toUser(user);
   }
 
+  async changePassword(
+    principal: AuthPrincipal,
+    currentPassword: string,
+    newPassword: string
+  ): Promise<SessionBundle> {
+    const user = this.state.users.get(principal.user.id);
+    if (!user || user.disabledAt) {
+      throw new AppError(404, "user_not_found", "User was not found.");
+    }
+    if (!verifyPassword(currentPassword, user.passwordHash)) {
+      throw new AppError(401, "invalid_current_password", "Current password is incorrect.");
+    }
+
+    const nextPasswordHash = hashPassword(newPassword);
+    if (nextPasswordHash === user.passwordHash) {
+      throw new AppError(
+        400,
+        "password_unchanged",
+        "New password must be different from the current password."
+      );
+    }
+
+    user.passwordHash = nextPasswordHash;
+    this.revokeAllSessionsForUser(user.id);
+
+    const device = this.createDeviceSession(user.id, principal.device.deviceName);
+    const session = this.issueSession(user, device);
+    await this.stateStore.saveState(this.state);
+    return session;
+  }
+
   async login(username: string, password: string, deviceName: string): Promise<SessionBundle> {
     const userId = this.state.usersByUsername.get(username);
     if (!userId) {

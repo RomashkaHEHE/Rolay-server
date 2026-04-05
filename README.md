@@ -6,7 +6,7 @@ room tree sync, and blob-based attachment storage.
 ## Current status
 
 - live auth endpoints: `POST /v1/auth/login`, `POST /v1/auth/refresh`
-- live auth endpoints: `GET /v1/auth/me`, `PATCH /v1/auth/me/profile`
+- live auth endpoints: `GET /v1/auth/me`, `PATCH /v1/auth/me/profile`, `PATCH /v1/auth/me/password`
 - live room endpoints: `GET /v1/rooms`, `POST /v1/rooms`, `POST /v1/rooms/join`
 - live room invite endpoints:
   `GET /v1/rooms/:workspaceId/invite`,

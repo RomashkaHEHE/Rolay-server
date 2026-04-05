@@ -48,6 +48,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       user
     };
   });
+
+  app.patch("/v1/auth/me/password", async (request) => {
+    const principal = requireAuth(app, request);
+    const body = asObject(request.body);
+    const session = await app.rolay.auth.changePassword(
+      principal,
+      requireString(body, "currentPassword"),
+      requireString(body, "newPassword")
+    );
+
+    return {
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      user: session.user
+    };
+  });
 };
 
 export default authRoutes;
