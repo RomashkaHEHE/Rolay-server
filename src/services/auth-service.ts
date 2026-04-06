@@ -14,6 +14,7 @@ import {
   WorkspaceEvent
 } from "../domain/types";
 import { MemoryState, StoredWorkspace } from "./memory-state";
+import { SettingsEventsService } from "./settings-events-service";
 import { StateStore } from "./state-store";
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -49,7 +50,8 @@ export class AuthService {
   constructor(
     private readonly state: MemoryState,
     private readonly env: AppEnv,
-    private readonly stateStore: StateStore
+    private readonly stateStore: StateStore,
+    private readonly settingsEvents: SettingsEventsService
   ) {}
 
   async ensureReady(): Promise<void> {
@@ -107,6 +109,7 @@ export class AuthService {
     this.state.users.set(user.id, user);
     this.state.usersByUsername.set(user.username, user.id);
     await this.stateStore.saveState(this.state);
+    this.settingsEvents.publishAdminUserCreated(user.id);
     return this.toUser(user);
   }
 
@@ -131,6 +134,7 @@ export class AuthService {
       );
     }
 
+    this.settingsEvents.publishAdminUserDeleted(user);
     this.revokeAllSessionsForUser(userId);
     this.dropEphemeralUserTickets(userId);
     this.removeUserFromWorkspaces(userId);
@@ -152,6 +156,8 @@ export class AuthService {
 
     user.displayName = displayName;
     await this.stateStore.saveState(this.state);
+    this.settingsEvents.publishAuthMeUpdated(userId);
+    this.settingsEvents.publishAdminUserUpdated(userId);
     return this.toUser(user);
   }
 
@@ -400,8 +406,11 @@ export class AuthService {
       this.publishWorkspaceEvent(workspace, "workspace.member.left", {
         userId
       });
+      this.settingsEvents.publishRoomUpdated(workspaceId);
+      this.settingsEvents.publishAdminRoomMembersUpdated(workspaceId);
 
       if (workspace.memberships.size === 0) {
+        this.settingsEvents.publishRoomDeleted(workspace);
         this.dropWorkspaceState(workspaceId);
         continue;
       }
@@ -417,6 +426,11 @@ export class AuthService {
             userId: promotedMember.userId,
             role: promotedMember.role
           });
+          this.settingsEvents.publishRoomMembershipChanged(
+            workspaceId,
+            promotedMember.userId,
+            promotedMember.role
+          );
         }
       }
     }

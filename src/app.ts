@@ -14,6 +14,7 @@ import authRoutes from "./modules/auth/auth.routes";
 import filesRoutes from "./modules/files/files.routes";
 import invitesRoutes from "./modules/invites/invites.routes";
 import rootRoutes from "./modules/root/root.routes";
+import settingsEventsRoutes from "./modules/settings-events/settings-events.routes";
 import storageRoutes from "./modules/storage/storage.routes";
 import systemRoutes from "./modules/system/system.routes";
 import treeRoutes from "./modules/tree/tree.routes";
@@ -76,6 +77,7 @@ export async function buildApp(
   await app.register(authRoutes);
   await app.register(adminRoutes);
   await app.register(invitesRoutes);
+  await app.register(settingsEventsRoutes);
   await app.register(workspacesRoutes);
   await app.register(treeRoutes);
   await app.register(filesRoutes);

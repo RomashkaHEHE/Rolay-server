@@ -9,6 +9,7 @@ import {
   Membership,
   OperationResult,
   RefreshTokenRecord,
+  StoredSettingsEvent,
   StoredUser,
   Workspace,
   WorkspaceInvite,
@@ -17,6 +18,7 @@ import {
 import { createInviteCode } from "../core/ids";
 
 export type WorkspaceEventListener = (event: WorkspaceEvent) => void;
+export type SettingsEventListener = (event: StoredSettingsEvent) => void;
 
 export interface StoredWorkspaceSnapshot {
   workspace: Workspace;
@@ -32,7 +34,7 @@ export interface StoredWorkspaceSnapshot {
 }
 
 export interface MemoryStateSnapshot {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   users: StoredUser[];
   devices: DeviceSession[];
   accessTokens: AccessTokenRecord[];
@@ -42,6 +44,8 @@ export interface MemoryStateSnapshot {
   crdtTokens: CrdtTokenRecord[];
   blobUploadTickets: BlobUploadTicketRecord[];
   blobDownloadTickets: BlobDownloadTicketRecord[];
+  settingsEvents?: StoredSettingsEvent[];
+  nextSettingsEventId?: number;
 }
 
 export interface StoredWorkspace {
@@ -68,6 +72,9 @@ export class MemoryState {
   public readonly crdtTokens = new Map<string, CrdtTokenRecord>();
   public readonly blobUploadTickets = new Map<string, BlobUploadTicketRecord>();
   public readonly blobDownloadTickets = new Map<string, BlobDownloadTicketRecord>();
+  public readonly settingsEvents: StoredSettingsEvent[] = [];
+  public nextSettingsEventId = 1;
+  public readonly settingsListeners = new Set<SettingsEventListener>();
 
   static fromSnapshot(snapshot?: MemoryStateSnapshot): MemoryState {
     const state = new MemoryState();
@@ -140,12 +147,17 @@ export class MemoryState {
       state.blobDownloadTickets.set(downloadTicket.ticketId, downloadTicket);
     }
 
+    state.settingsEvents.push(...(snapshot.settingsEvents ?? []));
+    state.nextSettingsEventId =
+      snapshot.nextSettingsEventId ??
+      ((snapshot.settingsEvents?.at(-1)?.eventId ?? 0) + 1);
+
     return state;
   }
 
   toSnapshot(): MemoryStateSnapshot {
     return {
-      version: 2,
+      version: 3,
       users: [...this.users.values()].map((user) => ({
         ...user,
         isAdmin: Boolean(user.isAdmin)
@@ -167,7 +179,9 @@ export class MemoryState {
       blobObjects: [...this.blobObjects.values()],
       crdtTokens: [...this.crdtTokens.values()],
       blobUploadTickets: [...this.blobUploadTickets.values()],
-      blobDownloadTickets: [...this.blobDownloadTickets.values()]
+      blobDownloadTickets: [...this.blobDownloadTickets.values()],
+      settingsEvents: [...this.settingsEvents],
+      nextSettingsEventId: this.nextSettingsEventId
     };
   }
 }

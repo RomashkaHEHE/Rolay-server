@@ -11,6 +11,7 @@ import { buildApp } from "../src/app";
 import { AppEnv } from "../src/config/env";
 import { AuthService } from "../src/services/auth-service";
 import { MemoryState } from "../src/services/memory-state";
+import { SettingsEventsService } from "../src/services/settings-events-service";
 import WebSocket from "ws";
 
 type AppInstance = Awaited<ReturnType<typeof buildApp>>;
@@ -85,6 +86,99 @@ async function waitFor(
     }
     await sleep(stepMs);
   }
+}
+
+interface SseMessage {
+  id?: string;
+  event?: string;
+  data?: string;
+}
+
+interface SseStream {
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  decoder: TextDecoder;
+  buffer: string;
+}
+
+async function openSseStream(url: string, accessToken: string): Promise<SseStream> {
+  const response = await fetch(url, {
+    headers: {
+      authorization: `Bearer ${accessToken}`
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(response.body);
+  return {
+    reader: response.body.getReader(),
+    decoder: new TextDecoder(),
+    buffer: ""
+  };
+}
+
+async function readNextSseMessage(stream: SseStream, timeoutMs = 2000): Promise<SseMessage> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const normalizedBuffer = stream.buffer.replace(/\r/g, "");
+    const delimiterIndex = normalizedBuffer.indexOf("\n\n");
+    if (delimiterIndex >= 0) {
+      const rawMessage = normalizedBuffer.slice(0, delimiterIndex);
+      stream.buffer = normalizedBuffer.slice(delimiterIndex + 2);
+      if (rawMessage.startsWith(":") || rawMessage.trim() === "") {
+        continue;
+      }
+
+      const message: SseMessage = {};
+      for (const line of rawMessage.split("\n")) {
+        if (line.startsWith("id:")) {
+          message.id = line.slice(3).trim();
+          continue;
+        }
+        if (line.startsWith("event:")) {
+          message.event = line.slice(6).trim();
+          continue;
+        }
+        if (line.startsWith("data:")) {
+          message.data = line.slice(5).trim();
+        }
+      }
+
+      return message;
+    }
+
+    const result = await Promise.race([
+      stream.reader.read(),
+      sleep(25).then(() => "tick" as const)
+    ]);
+    if (result === "tick") {
+      continue;
+    }
+    if (result.done) {
+      throw new Error("SSE stream closed before the next message arrived.");
+    }
+
+    stream.buffer += stream.decoder.decode(result.value, { stream: true });
+  }
+
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for SSE message.`);
+}
+
+async function waitForSseEvent(
+  stream: SseStream,
+  eventName: string,
+  timeoutMs = 2000
+): Promise<SseMessage> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const message = await readNextSseMessage(stream, timeoutMs);
+    if (message.event === eventName) {
+      return message;
+    }
+  }
+
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for SSE event "${eventName}".`);
 }
 
 async function loginAs(
@@ -389,8 +483,9 @@ test("seed admin password is updated when env password changes on startup", asyn
     saveState: async (_state: MemoryState) => {},
     close: async () => {}
   };
+  const settingsEvents = new SettingsEventsService(state);
 
-  const auth = new AuthService(state, env, stateStore);
+  const auth = new AuthService(state, env, stateStore, settingsEvents);
   await auth.ensureReady();
   const oldSession = await auth.login("roma", "old-secret", "seed-device");
   assert.equal(oldSession.user.username, "roma");
@@ -409,6 +504,224 @@ test("seed admin password is updated when env password changes on startup", asyn
 
   const newSession = await auth.login("roma", "new-secret", "seed-device-new");
   assert.equal(newSession.user.username, "roma");
+});
+
+test("settings events are filtered for regular users and admins", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader1",
+    password: "secret",
+    displayName: "Reader One",
+    globalRole: "reader"
+  });
+
+  const adminSession = await loginAs(app, "alice", "secret", "admin-laptop");
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const readerSession = await loginAs(app, "reader1", "secret", "reader-laptop");
+  const initialCursor = app.rolay.settingsEvents.currentCursor();
+
+  const createRoomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Realtime Settings"
+    }
+  });
+
+  assert.equal(createRoomResponse.statusCode, 201);
+  const roomId = createRoomResponse.json().workspace.id;
+
+  const updateProfileResponse = await app.inject({
+    method: "PATCH",
+    url: "/v1/auth/me/profile",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      displayName: "Writer Updated"
+    }
+  });
+
+  assert.equal(updateProfileResponse.statusCode, 200);
+
+  const inviteResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(inviteResponse.statusCode, 200);
+
+  const joinResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${readerSession.accessToken}`
+    },
+    payload: {
+      code: inviteResponse.json().invite.code
+    }
+  });
+
+  assert.equal(joinResponse.statusCode, 200);
+
+  const createUserResponse = await app.inject({
+    method: "POST",
+    url: "/v1/admin/users",
+    headers: {
+      authorization: `Bearer ${adminSession.accessToken}`
+    },
+    payload: {
+      username: "reader2",
+      password: "secret",
+      displayName: "Reader Two",
+      globalRole: "reader"
+    }
+  });
+
+  assert.equal(createUserResponse.statusCode, 201);
+
+  const adminUser = app.rolay.auth.authenticateAccessToken(adminSession.accessToken).user;
+  const writerUser = app.rolay.auth.authenticateAccessToken(writerSession.accessToken).user;
+  const readerUser = app.rolay.auth.authenticateAccessToken(readerSession.accessToken).user;
+
+  const writerEvents = app.rolay.settingsEvents.listEventsSince(writerUser, initialCursor);
+  const readerEvents = app.rolay.settingsEvents.listEventsSince(readerUser, initialCursor);
+  const adminEvents = app.rolay.settingsEvents.listEventsSince(adminUser, initialCursor);
+
+  assert.ok(writerEvents.some((event) => event.type === "room.created" && event.scope === "rooms"));
+  assert.ok(
+    writerEvents.some((event) => event.type === "auth.me.updated" && event.scope === "auth.me")
+  );
+  assert.ok(writerEvents.some((event) => event.type === "room.updated" && event.scope === "rooms"));
+  assert.ok(writerEvents.every((event) => !event.type.startsWith("admin.user")));
+
+  assert.ok(
+    readerEvents.some(
+      (event) => event.type === "room.membership.changed" && event.scope === "rooms"
+    )
+  );
+  assert.ok(readerEvents.some((event) => event.type === "room.updated" && event.scope === "rooms"));
+  assert.ok(readerEvents.every((event) => event.type !== "room.created"));
+  assert.ok(readerEvents.every((event) => !event.type.startsWith("admin.")));
+
+  assert.ok(
+    adminEvents.some((event) => event.type === "room.created" && event.scope === "admin.rooms")
+  );
+  assert.ok(
+    adminEvents.some((event) => event.type === "room.updated" && event.scope === "admin.rooms")
+  );
+  assert.ok(
+    adminEvents.some((event) => event.type === "admin.user.created" && event.scope === "admin.users")
+  );
+  assert.ok(
+    adminEvents.some((event) => event.type === "admin.user.updated" && event.scope === "admin.users")
+  );
+  assert.ok(
+    adminEvents.some(
+      (event) =>
+        event.type === "admin.room.members.updated" && event.scope === "admin.room.members"
+    )
+  );
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("settings SSE stream sends ready event and supports cursor resume", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+
+  await app.listen({
+    host: "127.0.0.1",
+    port: 0
+  });
+
+  const address = app.server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  const firstStream = await openSseStream(`${baseUrl}/v1/events/settings`, writerSession.accessToken);
+  const readyMessage = await waitForSseEvent(firstStream, "stream.ready");
+  assert.equal(readyMessage.id, "0");
+  assert.ok(readyMessage.data);
+  assert.equal(JSON.parse(readyMessage.data).scope, "settings.stream");
+
+  const createFirstRoomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "SSE Room One"
+    }
+  });
+
+  assert.equal(createFirstRoomResponse.statusCode, 201);
+
+  const firstRoomEvent = await waitForSseEvent(firstStream, "room.created");
+  assert.ok(firstRoomEvent.id);
+  assert.ok(firstRoomEvent.data);
+  const firstRoomPayload = JSON.parse(firstRoomEvent.data);
+  assert.equal(firstRoomPayload.scope, "rooms");
+  assert.equal(firstRoomPayload.payload.room.workspace.name, "SSE Room One");
+
+  await firstStream.reader.cancel();
+
+  const createSecondRoomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "SSE Room Two"
+    }
+  });
+
+  assert.equal(createSecondRoomResponse.statusCode, 201);
+
+  const resumedStream = await openSseStream(
+    `${baseUrl}/v1/events/settings?cursor=${firstRoomEvent.id}`,
+    writerSession.accessToken
+  );
+  const resumedRoomEvent = await waitForSseEvent(resumedStream, "room.created");
+  assert.ok(resumedRoomEvent.data);
+  const resumedPayload = JSON.parse(resumedRoomEvent.data);
+  assert.equal(resumedPayload.payload.room.workspace.name, "SSE Room Two");
+
+  await resumedStream.reader.cancel();
+  await app.close();
+  await cleanupTestEnv(env);
 });
 
 test("writer can create duplicate-named rooms, manage invite key, and members can edit", async () => {

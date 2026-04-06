@@ -16,6 +16,7 @@ import {
   WorkspaceRole
 } from "../domain/types";
 import { MemoryState, StoredWorkspace, WorkspaceEventListener } from "./memory-state";
+import { SettingsEventsService } from "./settings-events-service";
 import { StateStore } from "./state-store";
 
 export interface EventStreamHandle {
@@ -57,7 +58,8 @@ interface WorkspaceMemberMutationResult {
 export class WorkspaceService {
   constructor(
     private readonly state: MemoryState,
-    private readonly stateStore: StateStore
+    private readonly stateStore: StateStore,
+    private readonly settingsEvents: SettingsEventsService
   ) {}
 
   listUserWorkspaces(actor: User): WorkspaceListItem[] {
@@ -130,6 +132,8 @@ export class WorkspaceService {
 
     this.state.workspaces.set(workspace.id, record);
     await this.stateStore.saveState(this.state);
+    this.settingsEvents.publishRoomCreated(workspace.id);
+    this.settingsEvents.publishAdminRoomMembersUpdated(workspace.id);
     return cloneValue(workspace);
   }
 
@@ -184,6 +188,8 @@ export class WorkspaceService {
       enabled: workspace.invite.enabled
     });
     await this.stateStore.saveState(this.state);
+    this.settingsEvents.publishRoomUpdated(workspaceId);
+    this.settingsEvents.publishRoomInviteUpdated(workspaceId);
     return this.toInviteView(workspace.workspace.id, workspace.invite);
   }
 
@@ -198,6 +204,7 @@ export class WorkspaceService {
       enabled: workspace.invite.enabled
     });
     await this.stateStore.saveState(this.state);
+    this.settingsEvents.publishRoomInviteUpdated(workspaceId);
     return this.toInviteView(workspace.workspace.id, workspace.invite);
   }
 
@@ -224,6 +231,13 @@ export class WorkspaceService {
         role: membership.role
       });
       await this.stateStore.saveState(this.state);
+      this.settingsEvents.publishRoomMembershipChanged(
+        workspace.workspace.id,
+        actor.id,
+        membership.role
+      );
+      this.settingsEvents.publishRoomUpdated(workspace.workspace.id);
+      this.settingsEvents.publishAdminRoomMembersUpdated(workspace.workspace.id);
     }
 
     return cloneValue(workspace.workspace);
@@ -257,6 +271,8 @@ export class WorkspaceService {
           role
         });
         await this.stateStore.saveState(this.state);
+        this.settingsEvents.publishRoomMembershipChanged(workspaceId, user.id, role);
+        this.settingsEvents.publishAdminRoomMembersUpdated(workspaceId);
       }
 
       return {
@@ -277,6 +293,9 @@ export class WorkspaceService {
       role
     });
     await this.stateStore.saveState(this.state);
+    this.settingsEvents.publishRoomMembershipChanged(workspaceId, user.id, role);
+    this.settingsEvents.publishRoomUpdated(workspaceId);
+    this.settingsEvents.publishAdminRoomMembersUpdated(workspaceId);
 
     return {
       workspace: cloneValue(workspace.workspace),
@@ -288,6 +307,7 @@ export class WorkspaceService {
   async deleteWorkspace(actor: User, workspaceId: string): Promise<Workspace> {
     const workspace = this.requireWorkspace(workspaceId);
     this.assertCanManageWorkspace(workspace, actor);
+    this.settingsEvents.publishRoomDeleted(workspace);
     this.dropWorkspaceState(workspaceId);
     await this.stateStore.saveState(this.state);
     return cloneValue(workspace.workspace);

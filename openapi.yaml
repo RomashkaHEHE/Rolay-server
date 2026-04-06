@@ -14,6 +14,7 @@ servers:
 tags:
   - name: auth
   - name: admin
+  - name: settings
   - name: rooms
   - name: tree
   - name: files
@@ -122,6 +123,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+  /v1/events/settings:
+    get:
+      tags: [settings]
+      summary: Subscribe to settings and admin management events
+      operationId: streamSettingsEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: >
+            Resume settings events after this cursor. When omitted, the stream starts
+            live-only and first emits a synthetic `stream.ready` event carrying the
+            current cursor.
+      responses:
+        '200':
+          description: Server-sent event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  id: 42
+                  event: room.updated
+                  data: {"eventId":42,"type":"room.updated","occurredAt":"2026-04-06T12:00:00.000Z","scope":"rooms","payload":{"room":{"workspace":{"id":"ws_01","name":"Math"},"membershipRole":"owner","createdAt":"2026-04-06T11:00:00.000Z","memberCount":3,"inviteEnabled":true}}}
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
   /v1/admin/users:
@@ -850,6 +882,44 @@ components:
         newPassword:
           type: string
           format: password
+    SettingsEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, type, occurredAt, scope, payload]
+      properties:
+        eventId:
+          type: integer
+          minimum: 0
+        type:
+          type: string
+          examples:
+            - stream.ready
+            - auth.me.updated
+            - room.created
+            - room.updated
+            - room.deleted
+            - room.membership.changed
+            - room.invite.updated
+            - admin.user.created
+            - admin.user.updated
+            - admin.user.deleted
+            - admin.room.members.updated
+        occurredAt:
+          type: string
+          format: date-time
+        scope:
+          type: string
+          enum:
+            - settings.stream
+            - auth.me
+            - rooms
+            - room.invite
+            - admin.users
+            - admin.rooms
+            - admin.room.members
+        payload:
+          type: object
+          additionalProperties: true
     CreateManagedUserRequest:
       type: object
       additionalProperties: false

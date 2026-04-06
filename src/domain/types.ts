@@ -88,6 +88,28 @@ export interface WorkspaceEvent {
   createdAt: string;
 }
 
+export type SettingsEventScope =
+  | "settings.stream"
+  | "auth.me"
+  | "rooms"
+  | "room.invite"
+  | "admin.users"
+  | "admin.rooms"
+  | "admin.room.members";
+
+export interface SettingsEvent {
+  eventId: number;
+  type: string;
+  occurredAt: string;
+  scope: SettingsEventScope;
+  payload: Record<string, unknown>;
+}
+
+export interface StoredSettingsEvent extends SettingsEvent {
+  targetUserIds: string[];
+  includeAdmins: boolean;
+}
+
 export interface OperationPreconditions {
   entryVersion?: number;
   path?: string;
