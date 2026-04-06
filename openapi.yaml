@@ -1260,28 +1260,54 @@ components:
           description: >
             Optional list of markdown entry IDs to bootstrap. When omitted,
             the server returns all active markdown entries in the room.
+        includeState:
+          type: boolean
+          default: true
+          description: >
+            When false, the server returns only per-document size metadata
+            and omits the base64-encoded state payloads.
     MarkdownBootstrapDocument:
       type: object
       additionalProperties: false
-      required: [entryId, docId, state]
+      required: [entryId, docId, stateBytes, encodedBytes]
       properties:
         entryId:
           type: string
         docId:
           type: string
+        stateBytes:
+          type: integer
+          minimum: 0
+          description: Byte size of the raw Yjs state update.
+        encodedBytes:
+          type: integer
+          minimum: 0
+          description: Byte size of the base64-encoded state payload.
         state:
           type: string
           description: Base64-encoded full Yjs state update for the document.
     MarkdownBootstrapResponse:
       type: object
       additionalProperties: false
-      required: [workspaceId, encoding, documents]
+      required:
+        [workspaceId, encoding, includesState, documentCount, totalStateBytes, totalEncodedBytes, documents]
       properties:
         workspaceId:
           type: string
         encoding:
           type: string
           enum: [base64]
+        includesState:
+          type: boolean
+        documentCount:
+          type: integer
+          minimum: 0
+        totalStateBytes:
+          type: integer
+          minimum: 0
+        totalEncodedBytes:
+          type: integer
+          minimum: 0
         documents:
           type: array
           items:

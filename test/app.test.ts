@@ -1247,6 +1247,8 @@ test("markdown bootstrap endpoint returns current stored Yjs state for workspace
   assert.equal(bootstrapAllResponse.statusCode, 200);
   assert.equal(bootstrapAllResponse.json().workspaceId, roomId);
   assert.equal(bootstrapAllResponse.json().encoding, "base64");
+  assert.equal(bootstrapAllResponse.json().includesState, true);
+  assert.equal(bootstrapAllResponse.json().documentCount, 2);
   assert.equal(bootstrapAllResponse.json().documents.length, 2);
 
   const bootstrapAllDocuments = bootstrapAllResponse.json().documents;
@@ -1259,6 +1261,12 @@ test("markdown bootstrap endpoint returns current stored Yjs state for workspace
 
   assert.ok(bootstrappedFirst);
   assert.ok(bootstrappedSecond);
+  assert.equal(typeof bootstrappedFirst.stateBytes, "number");
+  assert.equal(typeof bootstrappedFirst.encodedBytes, "number");
+  assert.ok(bootstrappedFirst.stateBytes > 0);
+  assert.ok(bootstrappedFirst.encodedBytes > 0);
+  assert.ok(bootstrapAllResponse.json().totalStateBytes >= bootstrappedFirst.stateBytes);
+  assert.ok(bootstrapAllResponse.json().totalEncodedBytes >= bootstrappedFirst.encodedBytes);
   assert.equal(
     decodeCrdtBootstrapState(bootstrappedFirst.state).getText("content").toString(),
     "123hello"
@@ -1284,6 +1292,28 @@ test("markdown bootstrap endpoint returns current stored Yjs state for workspace
     bootstrapSubsetResponse.json().documents.map((document: { entryId: string }) => document.entryId),
     [secondMarkdownEntry.id, firstMarkdownEntry.id]
   );
+  assert.equal(bootstrapSubsetResponse.json().includesState, true);
+
+  const bootstrapMetadataOnlyResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/markdown/bootstrap`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      includeState: false
+    }
+  });
+
+  assert.equal(bootstrapMetadataOnlyResponse.statusCode, 200);
+  assert.equal(bootstrapMetadataOnlyResponse.json().includesState, false);
+  assert.equal(bootstrapMetadataOnlyResponse.json().documentCount, 2);
+  assert.equal(bootstrapMetadataOnlyResponse.json().documents.length, 2);
+  for (const document of bootstrapMetadataOnlyResponse.json().documents) {
+    assert.equal(typeof document.stateBytes, "number");
+    assert.equal(typeof document.encodedBytes, "number");
+    assert.equal("state" in document, false);
+  }
 
   const invalidBootstrapResponse = await app.inject({
     method: "POST",
@@ -1298,6 +1328,20 @@ test("markdown bootstrap endpoint returns current stored Yjs state for workspace
 
   assert.equal(invalidBootstrapResponse.statusCode, 404);
   assert.equal(invalidBootstrapResponse.json().error.code, "entry_not_found");
+
+  const invalidIncludeStateResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/markdown/bootstrap`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      includeState: "yes"
+    }
+  });
+
+  assert.equal(invalidIncludeStateResponse.statusCode, 400);
+  assert.equal(invalidIncludeStateResponse.json().error.code, "invalid_request");
 
   await app.close();
   await cleanupTestEnv(env);

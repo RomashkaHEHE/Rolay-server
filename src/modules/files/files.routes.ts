@@ -25,17 +25,31 @@ function parseEntryIds(value: unknown): string[] {
   });
 }
 
+function parseIncludeState(value: unknown): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new AppError(400, "invalid_request", 'Field "includeState" must be a boolean.');
+  }
+
+  return value;
+}
+
 const filesRoutes: FastifyPluginAsync = async (app) => {
   app.post("/v1/workspaces/:workspaceId/markdown/bootstrap", async (request) => {
     const principal = requireAuth(app, request);
     const params = asObject(request.params, "Expected route params.");
     const body = request.body === undefined ? {} : asObject(request.body);
     const entryIds = body.entryIds === undefined ? undefined : parseEntryIds(body.entryIds);
+    const includeState = parseIncludeState(body.includeState);
 
     return app.rolay.files.bootstrapMarkdownDocuments(
       principal.user,
       requireString(params, "workspaceId"),
-      entryIds
+      entryIds,
+      includeState === undefined ? {} : { includeState }
     );
   });
 

@@ -47,12 +47,18 @@ interface BlobDownloadResponse {
 interface CrdtBootstrapDocument {
   entryId: string;
   docId: string;
-  state: string;
+  stateBytes: number;
+  encodedBytes: number;
+  state?: string;
 }
 
 interface CrdtBootstrapResponse {
   workspaceId: string;
   encoding: "base64";
+  includesState: boolean;
+  documentCount: number;
+  totalStateBytes: number;
+  totalEncodedBytes: number;
   documents: CrdtBootstrapDocument[];
 }
 
@@ -97,26 +103,37 @@ export class FileService {
   async bootstrapMarkdownDocuments(
     actor: User,
     workspaceId: string,
-    entryIds?: string[]
+    entryIds?: string[],
+    options: { includeState?: boolean } = {}
   ): Promise<CrdtBootstrapResponse> {
     const workspace = this.requireWorkspaceAccess(actor.id, workspaceId);
     const entries = this.resolveBootstrapEntries(workspace, entryIds);
+    const includeState = options.includeState !== false;
     const documents = await Promise.all(
       entries.map(async (entry) => {
         const storedState = await this.storage.loadDocument(entry.docId!);
         const state = storedState ?? EMPTY_CRDT_STATE;
+        const encodedState = Buffer.from(state).toString("base64");
 
         return {
           entryId: entry.id,
           docId: entry.docId!,
-          state: Buffer.from(state).toString("base64")
+          stateBytes: state.byteLength,
+          encodedBytes: Buffer.byteLength(encodedState, "utf8"),
+          ...(includeState ? { state: encodedState } : {})
         };
       })
     );
+    const totalStateBytes = documents.reduce((sum, document) => sum + document.stateBytes, 0);
+    const totalEncodedBytes = documents.reduce((sum, document) => sum + document.encodedBytes, 0);
 
     return {
       workspaceId: workspace.workspace.id,
       encoding: "base64",
+      includesState: includeState,
+      documentCount: documents.length,
+      totalStateBytes,
+      totalEncodedBytes,
       documents
     };
   }
