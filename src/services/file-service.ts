@@ -123,6 +123,8 @@ export class FileService {
     entryIds?: string[],
     options: { includeState?: boolean } = {}
   ): Promise<CrdtBootstrapResponse> {
+    // Bootstrap preloads persisted Yjs state so a client can hydrate local cache and work safely
+    // offline. Live collaboration still happens over the CRDT websocket, not through this endpoint.
     const workspace = this.requireWorkspaceAccess(actor.id, workspaceId);
     const entries = this.resolveBootstrapEntries(workspace, entryIds);
     const includeState = options.includeState !== false;
@@ -171,6 +173,8 @@ export class FileService {
       this.state.blobObjects.has(hash) ||
       await this.storage.hasBlob(hash)
     ) {
+      // Blob storage is content-addressed, so identical payloads can skip the byte transfer and
+      // only publish a new tree revision.
       return {
         alreadyExists: true,
         hash,
@@ -230,6 +234,7 @@ export class FileService {
     }
 
     this.state.blobUploadTickets.delete(uploadId);
+    // Removing the ticket prevents a later commit path from treating this upload as valid.
     const wasActive = await this.storage.cancelActiveUpload(uploadId);
     await this.stateStore.saveState(this.state);
 

@@ -1,49 +1,47 @@
-# Deploy and Auto-Deploy
+# Deploy And Auto-Deploy
 
-This document describes the production deploy flow for `Rolay Server`.
+This document describes the current production deploy shape for Rolay Server.
 
-## Target shape
+## Current Production Shape
 
-- GitHub Actions builds and pushes the Docker image to `GHCR`
-- the VPS connects over SSH
-- the VPS keeps a checked-out copy of the repository in the deploy directory
-- each deploy pulls the latest `main` branch, pulls the new image, and restarts the stack with `docker compose`
+The repository uses GitHub Actions to:
 
-## Current VPS bootstrap
+- build and test the server
+- build a Docker image
+- push the image to `GHCR`
+- connect to the VPS over SSH
+- update the checkout on the VPS
+- restart the production compose stack
 
-The current target VPS was prepared with:
+## Current VPS
+
+Current live target:
 
 - OS: `Ubuntu 22.04`
-- Docker: installed
-- Docker Compose plugin: installed
-- deploy user: `user1`
+- user: `user1`
 - deploy path: `/home/user1/rolay-server`
-- runtime env file: `/home/user1/rolay-server/.env`
+- direct public access currently on port `3000`
 
-The repository stays public on GitHub, so the VPS can clone it over HTTPS.
+## Workflow Files
 
-## GitHub Actions flow
+- `.github/workflows/ci.yml`
+- `.github/workflows/deploy.yml`
 
-Workflow files:
+## Deploy Workflow Summary
 
-- [ci.yml](../.github/workflows/ci.yml)
-- [deploy.yml](../.github/workflows/deploy.yml)
+The deploy workflow currently:
 
-`deploy.yml` now does the following on the VPS:
-
-1. creates `DEPLOY_PATH` if it does not exist
-2. bootstraps a git checkout in place on the first run
-3. otherwise fetches and fast-forwards `main`
-4. sets `ROLAY_IMAGE` to the just-built `GHCR` tag
-5. logs in to `ghcr.io` on the VPS with the workflow `GITHUB_TOKEN`
+1. creates the deploy directory if needed
+2. bootstraps a git checkout on first run
+3. fetches and fast-forwards `main`
+4. logs into `ghcr.io`
+5. sets `ROLAY_IMAGE` to the current GHCR tag
 6. runs `docker compose -f docker-compose.prod.yml pull`
 7. runs `docker compose -f docker-compose.prod.yml up -d --remove-orphans`
-8. logs out from `ghcr.io`
-9. prunes old dangling images
+8. logs out of `ghcr.io`
+9. prunes dangling images
 
-## GitHub secrets
-
-Set these repository secrets before enabling auto-deploy:
+## Secrets Required In GitHub
 
 - `DEPLOY_HOST`
 - `DEPLOY_PORT`
@@ -51,51 +49,60 @@ Set these repository secrets before enabling auto-deploy:
 - `DEPLOY_PATH`
 - `DEPLOY_SSH_KEY`
 
-No separate `GHCR` secret is required for this workflow: the deploy step reuses the GitHub Actions `GITHUB_TOKEN` to authenticate the VPS against `ghcr.io` for the pull.
-
-For the current VPS, the non-secret values are:
+The current non-secret values are:
 
 - `DEPLOY_HOST=46.16.36.87`
 - `DEPLOY_PORT=22`
 - `DEPLOY_USER=user1`
 - `DEPLOY_PATH=/home/user1/rolay-server`
 
-`DEPLOY_SSH_KEY` must contain the private key that matches the public key installed on the VPS.
+## Production Runtime Files
 
-## Runtime env on the VPS
+Important production files on the VPS:
 
-The production stack reads `/home/user1/rolay-server/.env`.
+- `/home/user1/rolay-server/.env`
+- `/home/user1/rolay-server/docker-compose.prod.yml`
 
-It currently contains:
-
-- `POSTGRES_*` values for the local Postgres container
-- `MINIO_*` values for the local MinIO container
-- `PUBLIC_BASE_URL`, `CRDT_WS_URL`, `BLOB_*` values pointing at the server IP on port `3000`
-- `DEV_AUTH_*` values for the initial application login
-
-If you later move behind a domain and reverse proxy, update:
+The runtime `.env` defines:
 
 - `PUBLIC_BASE_URL`
 - `CRDT_WS_URL`
 - `BLOB_UPLOAD_BASE_URL`
 - `BLOB_DOWNLOAD_BASE_URL`
+- `STATE_DRIVER`
+- `POSTGRES_*`
+- `STORAGE_DRIVER`
+- `MINIO_*`
+- `DEV_AUTH_*`
 
-## Network note
+## Access And Networking
 
-The cloud security group must allow the app port you plan to use.
-
-Right now the runtime is configured for direct access on:
+Current setup exposes the app directly on:
 
 - `3000/tcp`
 
-If the cloud security group only allows SSH, the app will deploy successfully but will not be reachable from the internet. Later, the better production shape is:
+The cloud security group must allow:
 
-- open `80/tcp` and `443/tcp`
-- put `Caddy` or `Nginx` in front
-- move the app behind the reverse proxy
+- `22/tcp` for SSH
+- `3000/tcp` for current direct app access
 
-## First live deploy
+The better production target later is:
 
-After the local changes are committed and pushed to `main`, the deploy workflow is enough to bootstrap the repo on the VPS and start the stack.
+- `80/tcp`
+- `443/tcp`
+- reverse proxy in front of the app
 
-Until those changes are pushed, the VPS is only prepared, not yet serving the current local version of the app.
+## Operational Notes
+
+Important current behavior:
+
+- the seeded admin account is read from `.env` during startup
+- changing `DEV_AUTH_PASSWORD` requires restarting the server to reseed the admin password
+- state is persisted through the configured state store, not through in-memory process state alone
+
+## Recommended Next Infra Improvements
+
+- move public traffic behind `Caddy` or `Nginx`
+- switch public URLs from raw IP to domain + HTTPS
+- add blob/object cleanup for orphaned staged or unreferenced payloads
+- consider direct object-storage delivery for very large files if traffic grows

@@ -1,173 +1,164 @@
-# Разрешение конфликтов в Rolay `v1`
+# Conflict Resolution In Rolay Server
 
-## 1. Базовый принцип
+This document describes the current conflict model. It explains what the server actually guarantees
+and what the plugin still has to do on the client side.
 
-Мы не пытаемся сделать один универсальный механизм для всех типов данных.
+## Core Principle
 
-Конфликты решаются по-разному в зависимости от сущности:
+Rolay does not use one universal merge strategy for everything.
 
-- содержимое `.md`: через CRDT;
-- дерево файлов: через серверные preconditions и детерминированные правила;
-- бинарные файлы: через hash-based версии и materialized conflict copies.
+Different data types use different rules:
 
-## 2. Markdown (`.md`)
+- Markdown content => CRDT merge
+- file tree => server-authoritative operations with preconditions
+- binary files => whole-file revision model
 
-### 2.1 Concurrent edit
+## Markdown
 
-Если два пользователя редактируют один и тот же Markdown-файл одновременно:
+### Concurrent edits
 
-- оба редактируют один Yjs document;
-- merge выполняется CRDT-механизмом;
-- отдельный текстовый conflict file не создаётся.
+Markdown files are shared `Yjs` documents.
 
-### 2.2 Offline edit
+If two users edit the same note at the same time:
 
-Если пользователь редактировал `.md` офлайн:
+- both edit the same logical CRDT document
+- `Yjs` merges their updates
+- the server does not do last-write-wins text replacement
 
-- изменения накапливаются локально в persistence Yjs;
-- после реконнекта изменения вливаются в общий документ;
-- сервер не должен затирать их plain-text snapshot'ом.
+This means concurrent Markdown edits should merge rather than silently overwrite each other.
 
-### 2.3 Delete vs offline edit
+### Offline edits
 
-Если файл был удалён на сервере, а у клиента есть локальные офлайн-редакции:
+The intended model is:
 
-- сервер не должен молча отбросить локальный CRDT state;
-- клиент должен создать `conflict copy`.
+- local Markdown edits are stored in local `Yjs` state
+- reconnect merges that state back into the shared document
 
-Рекомендуемое имя:
+If local offline Markdown edits are lost, that is a client bug or client bootstrap bug, not intended server behavior.
 
-- `Week-01 (conflict from Roma, 2026-04-03 12-45).md`
+### Delete vs offline edits
 
-Практическое правило:
+If a room entry was deleted while a user still has offline Markdown changes:
 
-- delete побеждает для исходного пути;
-- офлайн-редакция сохраняется как новый файл.
+- the original path should stay deleted if the server already accepted that delete
+- the offline content should be preserved by the client as a conflict copy
 
-## 3. Rename и move
+The current server does not automatically materialize that copy; the plugin must do it safely.
 
-### 3.1 Same entry, two renames
+## Tree Operations
 
-Если один и тот же `entryId` был переименован в разные пути на двух клиентах:
+Tree conflicts are handled through:
 
-- сервер принимает первую успешно применённую операцию;
-- вторая получает `409 entry_version_mismatch`.
+- stable entry IDs
+- `entryVersion`
+- optional `path` preconditions
 
-Клиент после `409` должен:
+The server accepts valid operations in order and rejects stale ones with conflict results.
 
-- обновить tree snapshot локально;
-- либо повторить rename уже от нового пути;
-- либо показать пользователю, что файл уже был переименован.
+### Rename and move
 
-### 3.2 Different entries, same target path
+If two clients rename or move the same entry concurrently:
 
-Если два разных файла хотят занять один и тот же путь:
+- one operation wins first
+- the other usually gets `entry_version_mismatch` or `path_mismatch`
 
-- первый успешно занимает путь;
-- второй материализуется как conflict path.
+If two different entries target the same final path:
 
-Рекомендуемое правило имени:
+- the second operation returns conflict
+- the response may include `suggestedPath`
 
-- `target (conflict 1).md`
-- `target (conflict 2).md`
+### Delete and restore
 
-Сервер должен сам уметь подобрать свободное имя.
+Delete and restore are logical operations on entries.
 
-## 4. Delete
+If restore conflicts with an existing path or invalid parent:
 
-### 4.1 Delete vs rename
+- server returns conflict
+- client should not guess
+- client should either refetch or use `suggestedPath` if provided
 
-Если один клиент удалил файл, а другой переименовал его с устаревшей версией:
+## Binary Files
 
-- сервер применяет только первую валидную операцию;
-- вторая получает `409`.
+Binary files are not CRDT.
 
-### 4.2 Delete folder with concurrent child changes
+The model is:
 
-Для `v1` delete папки трактуется как рекурсивное логическое удаление текущего server state.
+- upload bytes
+- then commit a new blob revision
 
-Если в этот момент другой клиент офлайн создал внутри неё новые файлы:
+There is no server-side content merge for binary revisions.
 
-- при последующей синхронизации такие файлы не должны исчезнуть без следа;
-- клиент должен вынести их в conflict area.
+### Concurrent binary updates
 
-Рекомендуемая conflict area:
+If two users update the same binary file:
 
-- `.rolay-conflicts/`
+- they may upload different blobs
+- whichever `commit_blob_revision` is accepted first becomes the current revision
+- the other client should see conflict through stale `preconditions` / `entryVersion`
 
-## 5. Бинарные файлы
+The client must not pretend that binary content can be merged like Markdown.
 
-### 5.1 Concurrent overwrite
+### Canceling an upload
 
-Если два клиента изменили один и тот же бинарный файл:
+Binary upload is now stage-then-commit.
 
-- бинарное содержимое не мержится;
-- каждая версия определяется новым `SHA-256`;
-- первая подтверждённая ревизия становится основной;
-- вторая при конфликте становится отдельным conflict file.
+If a user cancels upload:
 
-### 5.2 Hash equality
+- client should abort the HTTP upload request
+- client should call the cancel endpoint
+- client must not send `commit_blob_revision`
 
-Если hash совпадает:
+Until commit happens, the room should behave as if the new file version does not exist yet.
 
-- конфликтом это не считается;
-- можно просто обновить метаданные и не создавать дубликат blob.
+### Partial upload visibility
 
-## 6. Порядок принятия решений
+The server does not publish partial binary content to the room.
 
-Когда клиент сталкивается с `409`, он не должен пытаться угадывать.
+Other users only learn about a new binary revision after:
 
-Порядок действий:
+- upload completed successfully
+- `commit_blob_revision` succeeded
 
-1. Получить актуальное server state.
-2. Сопоставить локальную операцию с типом конфликта.
-3. Применить детерминированное правило.
-4. Если правило требует нового файла, создать conflict copy.
-5. Сохранить пользователю историю того, что произошло.
+This avoids exposing half-uploaded files.
 
-## 7. Что сервер обязан возвращать при конфликте
+## SSE Consistency
 
-Минимум:
+There are two SSE streams and they solve different conflict problems.
 
-- `error.code`
-- `entryId`
-- текущий `serverEntry`
-- при необходимости предложенный `suggestedPath`
+### Room SSE
 
-Пример:
+Used for:
 
-```json
-{
-  "error": {
-    "code": "path_already_exists",
-    "message": "Target path is already occupied",
-    "details": {
-      "entryId": "fil_02",
-      "suggestedPath": "Algebra/Week-01 (conflict 1).md"
-    }
-  }
-}
-```
+- tree events
+- blob revision commit visibility
 
-## 8. Что клиент обязан логировать локально
+### Settings SSE
 
-Plugin должен иметь локальный журнал синхронизации:
+Used for:
 
-- время операции;
-- `opId`;
-- тип операции;
-- результат;
-- человекочитаемое описание конфликта.
+- room list
+- invite state
+- profile/admin management UI
 
-Это сильно упростит отладку реальных пользовательских проблем.
+Clients should not mix them or treat one as a substitute for the other.
 
-## 9. Сознательные упрощения `v1`
+## What The Client Should Do On Conflict
 
-Мы не делаем:
+When the server returns tree conflict:
 
-- автоматический merge двух параллельных rename-цепочек;
-- merge бинарных файлов;
-- CRDT для file tree;
-- интеллектуальное разрешение конфликтов на уровне frontmatter fields.
+1. inspect the returned `reason`
+2. inspect `serverEntry` if present
+3. refetch or locally reconcile with current server state
+4. retry only if the action is still valid
 
-Это ограничение, но оно делает систему заметно надёжнее на первом этапе.
+The client should not silently overwrite state after a `409`.
+
+## Current Known Limits
+
+The current server does not yet provide:
+
+- automatic background cleanup of orphaned uploaded blobs
+- resumable chunked uploads
+- automatic client conflict-copy creation for every offline edge case
+
+Those are acceptable `v1` limitations, but the plugin should be conservative and preserve user data whenever possible.

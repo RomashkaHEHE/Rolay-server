@@ -1,311 +1,264 @@
-# Архитектура Rolay Server
+# Rolay Server Architecture
 
-## 1. Цели
+This document describes the current server architecture as it exists in this repository.
+If this file and the code ever disagree, trust:
 
-`Rolay` нужен для небольшой академической группы, которой важны:
+1. `openapi.yaml`
+2. route modules in `src/modules`
+3. service implementations in `src/services`
 
-- совместное редактирование `.md` в реальном времени;
-- корректная работа при временном офлайне;
-- синхронизация дерева файлов без тихой потери изменений;
-- простая self-hosted эксплуатация;
-- понятный протокол, который можно реализовать в Obsidian plugin без привязки к текущему чату.
+## Goals
 
-## 2. Продуктовые ограничения `v1`
+Rolay is designed for a small self-hosted collaboration group using Obsidian.
+The current server optimizes for:
 
-В `v1` сознательно сужаем объём:
+- reliable realtime editing for Markdown notes
+- predictable tree/file sync
+- simple room and invite management
+- enough structure for an Obsidian plugin to be implemented without chat history
+- operational simplicity over maximum generality
 
-- real-time только для Markdown-файлов;
-- сервер является источником истины для дерева файлов;
-- вложения и прочие не-Markdown файлы передаются как blob-объекты;
-- один workspace примерно соответствует одной учебной группе;
-- роли только базовые: `owner`, `editor`, `viewer`.
+## High-Level Model
 
-Это намеренно проще, чем у Relay. Нам важнее надёжный и понятный фундамент, чем максимальное покрытие кейсов.
+The server has three different synchronization layers:
 
-## 3. Главная архитектурная идея
+1. Room and user management
+   - authentication
+   - global roles
+   - room membership
+   - invites
+   - settings/admin live updates
 
-Система делится на три разных режима данных:
+2. Workspace tree sync
+   - canonical file/folder tree per room
+   - server-authoritative
+   - changes exposed through REST batch ops and room SSE
 
-1. `Workspace tree`
-   - канонический серверный индекс файлов и папок;
-   - хранит пути, типы файлов, ревизии, состояние удаления, привязку к CRDT-документу или blob;
-   - не является CRDT.
+3. File content sync
+   - Markdown: realtime `Yjs` / `Hocuspocus`
+   - non-Markdown files: blob-based whole-file sync
 
-2. `Markdown document content`
-   - хранится как Yjs-документ;
-   - синхронизируется через WebSocket в real time;
-   - обеспечивает merge без текстовых конфликтов при конкурентном редактировании.
+These layers are intentionally separate. Only Markdown content uses CRDT.
 
-3. `Blob content`
-   - для изображений, PDF, архивов и любых других бинарных файлов;
-   - хранится по `SHA-256` в S3-compatible storage;
-   - связывается с записью файла в файловом дереве через версию и hash.
+## Roles
 
-Идея в том, что CRDT используется там, где он реально нужен: в содержимом заметки. Путь файла, rename, delete, attach и quota проще и безопаснее решать через обычную серверную модель данных.
+There are two role systems.
 
-## 4. Технологическая стратегия
+### Global roles
 
-Для `v1` рекомендуемый стек:
+- `admin`
+- `writer`
+- `reader`
 
-- `TypeScript` / `Node.js`;
-- `Fastify` или `NestJS` для HTTP API;
-- `Hocuspocus` или совместимый Yjs websocket layer для CRDT;
-- `PostgreSQL` для основной модели данных;
-- `Redis` опционально для presence, rate limit и горизонтального масштабирования;
-- `S3-compatible storage` для blob-объектов;
-- Docker-based deploy.
+Behavior:
 
-Почему не форк `relay-server`:
+- `admin` can manage users and rooms
+- `writer` can create rooms
+- `reader` cannot create rooms and can only join existing rooms
 
-- у Relay open-source не покрывает весь control plane;
-- для нашей задачи важно быстро и понятно реализовать auth, workspace-модель и file tree;
-- TypeScript упростит одновременную разработку сервера и плагина.
+### Room roles
 
-## 5. Логические модули сервера
+- `owner`
+- `member`
 
-### 5.1 Auth Module
+Behavior:
 
-Отвечает за:
+- `owner` can manage the room invite
+- `member` can participate in the room but cannot manage invite state
 
-- регистрацию и вход;
-- refresh/access token flow;
-- приглашения в workspace;
-- device sessions;
-- выдачу краткоживущих realtime/blob токенов.
+## Primary Transport Layers
 
-### 5.2 Workspace Module
+The server uses four transports:
 
-Отвечает за:
+1. REST JSON
+   - auth
+   - rooms
+   - admin
+   - tree snapshot
+   - tree mutations
+   - markdown bootstrap
+   - blob tickets
 
-- создание workspace;
-- membership и роли;
-- workspace settings;
-- выдачу snapshot дерева файлов.
+2. Room SSE
+   - `GET /v1/workspaces/{workspaceId}/events`
+   - used for tree/file events inside one room
 
-### 5.3 Tree Module
+3. Settings SSE
+   - `GET /v1/events/settings`
+   - used for profile, room list, admin list, invite, and membership updates
 
-Отвечает за:
+4. CRDT WebSocket
+   - `/v1/crdt`
+   - used only for live Markdown collaboration
 
-- создание папок и файлов;
-- rename, move, delete, restore;
-- хранение метаданных по файлам;
-- optimistic concurrency для file operations;
-- публикацию событий об изменении дерева.
+## File Sync Design
 
-### 5.4 CRDT Module
+### Markdown files
 
-Отвечает за:
+Markdown entries have:
 
-- выдачу токенов для realtime-документов;
-- загрузку и сохранение Yjs state;
-- WebSocket-сессию для `.md`;
-- awareness/presence в пределах открытого документа.
-
-### 5.5 Blob Module
+- `kind = "markdown"`
+- `contentMode = "crdt"`
+- `docId`
 
-Отвечает за:
-
-- upload/download tickets;
-- валидацию `SHA-256`, размера и MIME;
-- привязку blob к ревизии файла;
-- дедупликацию по хэшу.
-
-### 5.6 Sync/Event Module
-
-Отвечает за:
-
-- SSE stream или аналогичный однонаправленный канал событий workspace;
-- доставку событий об изменениях дерева;
-- курсор событий для резюма после реконнекта.
-
-## 6. Модель данных
-
-Ниже не финальная схема SQL, а целевая предметная модель.
+Flow:
 
-### 6.1 Users
+- client requests `crdt-token`
+- client connects to `Hocuspocus`
+- server loads/stores the `Yjs` document from persistent storage
 
-- `id`
-- `username`
-- `display_name`
-- `password_hash`
-- `created_at`
-- `disabled_at`
+### Non-Markdown files
 
-### 6.2 Devices
+Binary entries have:
 
-- `id`
-- `user_id`
-- `device_name`
-- `last_seen_at`
-- `refresh_token_hash`
+- `kind = "binary"`
+- `contentMode = "blob"`
+- optional `blob` metadata with `hash`, `sizeBytes`, `mimeType`
 
-### 6.3 Workspaces
+Flow:
 
-- `id`
-- `slug`
-- `name`
-- `created_by`
-- `created_at`
+- client creates a binary placeholder in the tree
+- client requests an upload ticket
+- file is uploaded to server-side staging
+- upload can be canceled before commit
+- only after `commit_blob_revision` does the new file version become visible to everyone else
 
-### 6.4 WorkspaceMembers
+This keeps binary sync simple and avoids pretending that non-text files are CRDT-safe.
 
-- `workspace_id`
-- `user_id`
-- `role` = `owner | editor | viewer`
-- `joined_at`
+## Why the Tree Is Server-Authoritative
 
-### 6.5 WorkspaceInvites
+The file tree is not a CRDT.
 
-- `id`
-- `workspace_id`
-- `code`
-- `role`
-- `expires_at`
-- `max_uses`
-- `used_count`
+Reasons:
 
-### 6.6 FileEntries
+- rename and move semantics are easier to reason about
+- Obsidian file handling maps more naturally to stable entry IDs plus canonical paths
+- conflict handling is simpler and more explicit
+- the implementation is easier for plugin agents to understand
 
-- `id`
-- `workspace_id`
-- `path`
-- `kind` = `folder | markdown | binary`
-- `content_mode` = `none | crdt | blob`
-- `doc_id` nullable
-- `current_blob_hash` nullable
-- `mime_type` nullable
-- `size_bytes` nullable
-- `entry_version`
-- `deleted_at` nullable
-- `created_by`
-- `updated_by`
-- `created_at`
-- `updated_at`
+The room tree is synchronized as:
 
-### 6.7 DocumentStates
+- snapshot via `GET /tree`
+- ordered event stream via room SSE
+- mutation via `POST /ops/batch`
 
-- `doc_id`
-- `workspace_id`
-- `file_entry_id`
-- `storage_key`
-- `state_vector` nullable
-- `updated_at`
+## Persistence Model
 
-### 6.8 BlobObjects
+There are two persistence axes.
 
-- `hash`
-- `storage_key`
-- `size_bytes`
-- `mime_type`
-- `created_at`
+### State store
 
-### 6.9 TreeEvents
+Configured by `STATE_DRIVER`:
 
-- `seq`
-- `workspace_id`
-- `event_type`
-- `op_id`
-- `actor_user_id`
-- `actor_device_id`
-- `payload_json`
-- `created_at`
+- `memory`
+- `postgres`
 
-## 7. Канонические правила `v1`
+Current implementation:
 
-### 7.1 Источник истины
+- server state is serialized as a snapshot
+- when using `postgres`, a single snapshot row is persisted
 
-- содержимое `.md` файла: Yjs document;
-- путь файла и факт его существования: server-side `FileEntries`;
-- бинарное содержимое: `BlobObjects`.
+This is simple but not yet a normalized relational model.
 
-### 7.2 File identity
+### Object/document storage
 
-Файл не идентифицируется только путём.
+Configured by `STORAGE_DRIVER`:
 
-Каждый файл имеет стабильный `file_entry_id`. Это позволяет:
+- `local`
+- `minio`
 
-- безопасно делать rename/move;
-- отделять identity файла от его текущего пути;
-- удобнее обрабатывать offline operations.
+Stored objects:
 
-### 7.3 Rename и move
+- Yjs document state
+- blob payloads
+- blob metadata
 
-`rename` и `move` меняют `path`, но не меняют `file_entry_id`.
+## Event Systems
 
-### 7.4 Delete
+There are two separate SSE systems.
 
-Delete сначала логический:
+### Room event stream
 
-- запись получает `deleted_at`;
-- события продолжают ссылаться на тот же `file_entry_id`;
-- физическая уборка blob/CRDT state возможна отдельным background job позже.
+Scope:
 
-## 8. Сценарии синхронизации
+- one room
+- file tree and file revision events
 
-### 8.1 Открытие workspace
+Implemented in:
 
-1. Клиент проходит auth.
-2. Клиент запрашивает snapshot дерева файлов.
-3. Клиент открывает event stream по workspace.
-4. Клиент сверяет локальные offline-операции с серверным снапшотом.
+- `src/modules/tree/tree.routes.ts`
+- `src/services/workspace-service.ts`
 
-### 8.2 Открытие Markdown-файла
+Typical events:
 
-1. Клиент запрашивает `crdt-token` для `file_entry_id`.
-2. Сервер возвращает `doc_id`, `ws_url`, `token`.
-3. Клиент подключается к Yjs/Hocuspocus endpoint.
-4. После sync клиент отражает текущее содержимое в локальном vault.
+- `tree.entry.created`
+- `tree.entry.updated`
+- `tree.entry.deleted`
+- `tree.entry.restored`
+- `blob.revision.committed`
 
-### 8.3 Upload бинарного файла
+### Settings event stream
 
-1. Клиент вычисляет `SHA-256`.
-2. Клиент запрашивает upload ticket.
-3. Если blob уже есть, сервер может пропустить upload.
-4. После успешного upload клиент делает `commit blob revision`.
-5. Сервер обновляет `FileEntries` и публикует tree event.
+Scope:
 
-### 8.4 Работа в офлайне
+- current user settings and room list
+- admin management data
 
-Для `.md`:
+Implemented in:
 
-- локальные изменения продолжают копиться в Yjs persistence;
-- после реконнекта Yjs сам сливает состояние.
+- `src/modules/settings-events/settings-events.routes.ts`
+- `src/services/settings-events-service.ts`
 
-Для дерева файлов:
+Typical events:
 
-- операции кладутся в локальную очередь;
-- при онлайне операции отправляются в сервер в порядке создания;
-- каждая операция содержит precondition.
+- `auth.me.updated`
+- `room.created`
+- `room.updated`
+- `room.deleted`
+- `room.membership.changed`
+- `room.invite.updated`
+- `admin.user.created`
+- `admin.user.updated`
+- `admin.user.deleted`
+- `admin.room.members.updated`
 
-## 9. Почему tree не CRDT
+## Large File Behavior
 
-Папки и пути формально тоже можно моделировать CRDT-структурами, но для `v1` это плохой tradeoff:
+Large binary uploads now follow a stage-then-commit model.
 
-- сложнее документировать;
-- сложнее объяснить rename/delete semantics;
-- сложнее отлаживать в Obsidian file system;
-- намного выше риск редких, но болезненных кейсов.
+Important properties:
 
-Для небольшой группы server-authoritative tree даёт лучший баланс простоты и предсказуемости.
+- upload is streamed through the server
+- download is streamed to clients
+- upload has explicit cancel support
+- room members do not see a new blob revision until `commit_blob_revision`
+- clients can show progress using:
+  - upload ticket metadata
+  - download ticket metadata
+  - HTTP `Content-Length`
 
-## 10. Безопасность
+This is safer than exposing partial binary content while an upload is still running.
 
-Минимальный baseline:
+## Scaling Boundaries
 
-- `access token` короткий;
-- `refresh token` хранится отдельно по device session;
-- отдельные краткоживущие токены для CRDT websocket;
-- отдельные upload/download tickets для blob;
-- проверка роли workspace на каждом mutation endpoint;
-- audit trail через `TreeEvents`.
+The current implementation is good for a small group and a single VPS, but it is still a single-process design.
 
-## 11. Что откладываем
+Current constraints:
 
-После `v1` можно вернуть в план:
+- one Node process
+- one in-memory listener fanout for SSE
+- one `Hocuspocus` instance
+- no Redis or distributed pub/sub
+- no resumable chunked uploads yet
+- no background GC for orphaned blob payloads yet
 
-- `.canvas` как отдельный CRDT-тип;
-- shared cursors на уровне workspace;
-- granular permissions по папкам;
-- server-side text indexing и full-text search;
-- WebDAV-like bridge;
-- partial sync для больших workspace.
+That is acceptable for the current product scope, but it is not a large multi-node architecture yet.
+
+## Recommended Reading Order For A New Agent
+
+1. `README.md`
+2. `docs/codebase-map.md`
+3. `openapi.yaml`
+4. route modules under `src/modules`
+5. service modules under `src/services`
+6. `test/app.test.ts`

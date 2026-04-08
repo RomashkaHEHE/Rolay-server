@@ -833,6 +833,8 @@ export class WorkspaceService {
     eventType: string,
     payload: Record<string, unknown>
   ): number {
+    // These are room-local ordered events for tree and file sync. Settings/admin UI uses a
+    // completely separate SSE stream with different payload shapes and cursor IDs.
     const event: WorkspaceEvent = {
       seq: workspace.nextEventSeq,
       eventType,

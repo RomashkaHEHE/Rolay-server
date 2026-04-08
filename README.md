@@ -86,6 +86,7 @@ Managed accounts:
 
 ## Repository docs
 
+- [docs/codebase-map.md](docs/codebase-map.md)
 - [docs/architecture.md](docs/architecture.md)
 - [docs/protocol.md](docs/protocol.md)
 - [docs/conflict-resolution.md](docs/conflict-resolution.md)
@@ -95,5 +96,6 @@ Managed accounts:
 ## Next step
 
 - replace the snapshot-style PostgreSQL persistence with a normalized relational model
-- push the current server state to GitHub and let the first VPS deploy run
 - add a reverse proxy and move public access from `:3000` to `80/443`
+- add background cleanup for orphaned blob payloads and expired upload artifacts
+- consider resumable uploads if large-file traffic grows

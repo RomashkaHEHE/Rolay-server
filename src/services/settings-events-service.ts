@@ -82,6 +82,8 @@ export class SettingsEventsService {
     cursor: number | undefined,
     listener: (event: SettingsEvent) => void
   ): SettingsEventStreamHandle {
+    // This SSE stream is for settings/admin UI, not for room tree sync. Its payloads are already
+    // shaped like UI snapshots so clients can patch stores directly without refetching by default.
     const wrappedListener: SettingsEventListener = (event) => {
       if (!this.isVisible(event, actor)) {
         return;
@@ -320,6 +322,8 @@ export class SettingsEventsService {
   }
 
   private publishEvent(input: PublishEventInput): number {
+    // Settings events have their own global cursor space. Do not mix these IDs with workspace
+    // event seq values from /v1/workspaces/{workspaceId}/events.
     const event: StoredSettingsEvent = {
       eventId: this.state.nextSettingsEventId,
       type: input.type,

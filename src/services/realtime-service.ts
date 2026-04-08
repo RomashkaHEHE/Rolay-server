@@ -135,6 +135,8 @@ export class RealtimeService {
   }
 
   private async loadDocument(documentName: string): Promise<Y.Doc | undefined> {
+    // Only Markdown entries use this CRDT channel. Tree metadata and binary files are synchronized
+    // through separate protocols and should never be loaded here.
     const state = await this.storage.loadDocument(documentName);
     if (!state) {
       return undefined;

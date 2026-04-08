@@ -527,6 +527,8 @@ export class StorageService {
     const stagingPath = path.join(this.uploadsDir, `${uploadId}.part`);
     await fs.rm(stagingPath, { force: true });
 
+    // Binary uploads are staged first and only become visible after commit_blob_revision updates
+    // the room tree. Other users should never observe partial file content.
     const controller = new AbortController();
     this.activeUploads.set(uploadId, {
       ticketId: uploadId,
@@ -590,6 +592,8 @@ export class StorageService {
       return false;
     }
 
+    // Abort the streaming pipeline and let the caller remove the logical upload ticket from app
+    // state. Both pieces are needed for a clean cancel.
     activeUpload.controller.abort();
     await fs.rm(activeUpload.stagingPath, { force: true });
     return true;
