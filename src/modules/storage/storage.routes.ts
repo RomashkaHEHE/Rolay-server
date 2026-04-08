@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
-
 import { FastifyPluginAsync } from "fastify";
+import { Readable } from "node:stream";
 
 import { AppError } from "../../core/errors";
 import { asObject, requireString } from "../../core/validation";
@@ -10,8 +9,8 @@ function isExpired(expiresAt: string): boolean {
 }
 
 const storageRoutes: FastifyPluginAsync = async (app) => {
-  app.addContentTypeParser(/^[^;]+(?:;.*)?$/, { parseAs: "buffer" }, (_request, body, done) => {
-    done(null, body);
+  app.addContentTypeParser(/^[^;]+(?:;.*)?$/, (_request, payload, done) => {
+    done(null, payload);
   });
 
   app.put("/_storage/upload/:ticketId", async (request, reply) => {
@@ -26,11 +25,8 @@ const storageRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const body = request.body;
-    if (!Buffer.isBuffer(body)) {
+    if (!(body instanceof Readable)) {
       throw new AppError(400, "invalid_request", "Upload body must be binary.");
-    }
-    if (body.byteLength !== ticket.sizeBytes) {
-      throw new AppError(400, "payload_too_large", "Blob size does not match upload ticket.");
     }
 
     const requestContentType = request.headers["content-type"];
@@ -42,12 +38,13 @@ const storageRoutes: FastifyPluginAsync = async (app) => {
       throw new AppError(400, "invalid_request", "Blob mimeType does not match upload ticket.");
     }
 
-    const calculatedHash = `sha256:${createHash("sha256").update(body).digest("base64")}`;
-    if (calculatedHash !== ticket.hash) {
-      throw new AppError(400, "blob_hash_mismatch", "Uploaded blob hash does not match ticket.");
-    }
-
-    const storedBlob = await app.rolay.storage.storeBlob(ticket.hash, body, ticket.mimeType);
+    const storedBlob = await app.rolay.storage.storeBlobUpload(
+      ticket.ticketId,
+      ticket.hash,
+      body,
+      ticket.mimeType,
+      ticket.sizeBytes
+    );
     app.rolay.state.blobObjects.set(storedBlob.hash, storedBlob);
     app.rolay.state.blobUploadTickets.delete(ticketId);
     await app.rolay.stateStore.saveState(app.rolay.state);
@@ -70,17 +67,18 @@ const storageRoutes: FastifyPluginAsync = async (app) => {
       throw new AppError(404, "download_ticket_not_found", "Download ticket not found.");
     }
 
-    const blob = await app.rolay.storage.loadBlob(ticket.hash);
+    const blob = await app.rolay.storage.loadBlobStream(ticket.hash);
     if (!blob) {
       throw new AppError(404, "entry_not_found", "Blob payload not found.");
     }
 
     reply.header("Content-Type", blob.metadata.mimeType);
-    reply.header("Content-Length", String(blob.payload.byteLength));
+    reply.header("Content-Length", String(blob.metadata.sizeBytes));
     reply.header("Cache-Control", "private, max-age=60");
+    reply.header("X-Rolay-Blob-Hash", blob.metadata.hash);
     app.rolay.state.blobDownloadTickets.delete(ticketId);
     await app.rolay.stateStore.saveState(app.rolay.state);
-    return reply.send(blob.payload);
+    return reply.send(blob.stream);
   });
 };
 

@@ -90,6 +90,17 @@ const filesRoutes: FastifyPluginAsync = async (app) => {
       requireString(params, "entryId")
     );
   });
+
+  app.delete("/v1/files/:entryId/blob/uploads/:uploadId", async (request) => {
+    const principal = requireAuth(app, request);
+    const params = asObject(request.params, "Expected route params.");
+
+    return app.rolay.files.cancelBlobUpload(
+      principal.user,
+      requireString(params, "entryId"),
+      requireString(params, "uploadId")
+    );
+  });
 };
 
 export default filesRoutes;

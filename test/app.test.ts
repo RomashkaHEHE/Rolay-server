@@ -1290,6 +1290,10 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
 
   assert.equal(memberUploadTicket.statusCode, 200);
   assert.equal(memberUploadTicket.json().alreadyExists, false);
+  assert.equal(memberUploadTicket.json().uploadId.length > 0, true);
+  assert.equal(memberUploadTicket.json().sizeBytes, binaryPayload.byteLength);
+  assert.equal(memberUploadTicket.json().mimeType, "image/png");
+  assert.equal(memberUploadTicket.json().cancel.method, "DELETE");
   const uploadPath = new URL(memberUploadTicket.json().upload.url).pathname;
 
   const uploadResponse = await app.inject({
@@ -1329,6 +1333,15 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
 
   assert.equal(commitBlobResponse.statusCode, 200);
   assert.equal(commitBlobResponse.json().results[0].entry.blob.hash, binaryHash);
+  assert.equal(commitBlobResponse.json().results[0].entry.blob.sizeBytes, binaryPayload.byteLength);
+
+  const writerUser = app.rolay.auth.authenticateAccessToken(writerSession.accessToken).user;
+  const workspaceEvents = app.rolay.workspaces.listEventsSince(writerUser, roomId, 0);
+  const commitEvent = workspaceEvents.find((event) => event.eventType === "blob.revision.committed");
+  assert.ok(commitEvent);
+  assert.equal(commitEvent.payload.hash, binaryHash);
+  assert.equal(commitEvent.payload.sizeBytes, binaryPayload.byteLength);
+  assert.equal(commitEvent.payload.mimeType, "image/png");
 
   const downloadTicketResponse = await app.inject({
     method: "POST",
@@ -1339,6 +1352,8 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
   });
 
   assert.equal(downloadTicketResponse.statusCode, 200);
+  assert.equal(downloadTicketResponse.json().sizeBytes, binaryPayload.byteLength);
+  assert.equal(downloadTicketResponse.json().mimeType, "image/png");
   const downloadPath = new URL(downloadTicketResponse.json().url).pathname;
   const downloadResponse = await app.inject({
     method: "GET",
@@ -1347,7 +1362,108 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
 
   assert.equal(downloadResponse.statusCode, 200);
   assert.equal(downloadResponse.headers["content-type"], "image/png");
+  assert.equal(downloadResponse.headers["content-length"], String(binaryPayload.byteLength));
   assert.equal(downloadResponse.body, binaryPayload.toString("utf8"));
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("blob upload sessions can be canceled before transfer begins", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Cancelable Uploads"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_cancelable_binary",
+          type: "create_binary_placeholder",
+          path: "attachments/big-video.mp4"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const binaryEntry = createEntryResponse.json().results[0].entry;
+  const payload = Buffer.from("pretend-big-upload", "utf8");
+  const hash = createSha256Hash(payload);
+
+  const uploadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "video/mp4"
+    }
+  });
+
+  assert.equal(uploadTicketResponse.statusCode, 200);
+  const uploadId = uploadTicketResponse.json().uploadId;
+  const uploadPath = new URL(uploadTicketResponse.json().upload.url).pathname;
+
+  const cancelResponse = await app.inject({
+    method: "DELETE",
+    url: `/v1/files/${binaryEntry.id}/blob/uploads/${uploadId}`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(cancelResponse.statusCode, 200);
+  assert.deepEqual(cancelResponse.json(), {
+    ok: true,
+    uploadId,
+    wasActive: false
+  });
+
+  const uploadAfterCancelResponse = await app.inject({
+    method: "PUT",
+    url: uploadPath,
+    headers: {
+      "content-type": "video/mp4"
+    },
+    payload
+  });
+
+  assert.equal(uploadAfterCancelResponse.statusCode, 404);
+  assert.equal(uploadAfterCancelResponse.json().error.code, "upload_ticket_not_found");
 
   await app.close();
   await cleanupTestEnv(env);

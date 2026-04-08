@@ -32,15 +32,32 @@ interface CrdtTokenResponse {
 
 interface BlobUploadResponse {
   alreadyExists: boolean;
+  uploadId?: string;
+  hash?: string;
+  sizeBytes?: number;
+  mimeType?: string;
+  expiresAt?: string;
   upload?: {
     method: "PUT";
     url: string;
     headers: Record<string, string>;
   };
+  cancel?: {
+    method: "DELETE";
+    url: string;
+  };
+}
+
+interface CancelBlobUploadResponse {
+  ok: true;
+  uploadId: string;
+  wasActive: boolean;
 }
 
 interface BlobDownloadResponse {
   hash: string;
+  sizeBytes: number;
+  mimeType: string;
   url: string;
 }
 
@@ -155,7 +172,10 @@ export class FileService {
       await this.storage.hasBlob(hash)
     ) {
       return {
-        alreadyExists: true
+        alreadyExists: true,
+        hash,
+        sizeBytes,
+        mimeType
       };
     }
 
@@ -174,13 +194,49 @@ export class FileService {
     await this.stateStore.saveState(this.state);
     return {
       alreadyExists: false,
+      uploadId: ticket.ticketId,
+      hash,
+      sizeBytes,
+      mimeType,
+      expiresAt: ticket.expiresAt,
       upload: {
         method: "PUT",
         url: `${this.env.blobUploadBaseUrl}/${ticket.ticketId}`,
         headers: {
           "content-type": mimeType
         }
+      },
+      cancel: {
+        method: "DELETE",
+        url: `${this.env.publicBaseUrl}/v1/files/${context.entry.id}/blob/uploads/${ticket.ticketId}`
       }
+    };
+  }
+
+  async cancelBlobUpload(
+    actor: User,
+    entryId: string,
+    uploadId: string
+  ): Promise<CancelBlobUploadResponse> {
+    const context = this.requireEntryAccess(actor.id, entryId);
+    this.assertBinaryEntry(context.entry);
+
+    const ticket = this.state.blobUploadTickets.get(uploadId);
+    if (!ticket || ticket.entryId !== context.entry.id) {
+      throw new AppError(404, "upload_ticket_not_found", "Upload ticket not found.");
+    }
+    if (ticket.userId !== actor.id && !actor.isAdmin) {
+      throw new AppError(403, "forbidden", "Only the uploader or admin can cancel uploads.");
+    }
+
+    this.state.blobUploadTickets.delete(uploadId);
+    const wasActive = await this.storage.cancelActiveUpload(uploadId);
+    await this.stateStore.saveState(this.state);
+
+    return {
+      ok: true,
+      uploadId,
+      wasActive
     };
   }
 
@@ -207,6 +263,8 @@ export class FileService {
     await this.stateStore.saveState(this.state);
     return {
       hash: ticket.hash,
+      sizeBytes: context.entry.blob.sizeBytes,
+      mimeType: context.entry.blob.mimeType,
       url: `${this.env.blobDownloadBaseUrl}/${ticket.ticketId}`
     };
   }

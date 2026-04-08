@@ -29,6 +29,7 @@ room tree sync, and blob-based attachment storage.
 - live file endpoints: `POST /v1/files/:entryId/crdt-token`
 - live file endpoints: `POST /v1/files/:entryId/blob/upload-ticket`
 - live file endpoints: `POST /v1/files/:entryId/blob/download-ticket`
+- live file endpoints: `DELETE /v1/files/:entryId/blob/uploads/:uploadId`
 - live CRDT runtime: `Yjs` + `Hocuspocus` websocket server on `/v1/crdt`
 - persistent document storage drivers: `local`, `minio`
 - persistent server state drivers: `memory`, `postgres`
@@ -40,6 +41,8 @@ room tree sync, and blob-based attachment storage.
 - realtime CRDT is used only for markdown content
 - room tree state is server-authoritative, not CRDT-based
 - binary files are synced as blob objects addressed by `sha256`
+- binary uploads are staged and streamed through the server before `commit_blob_revision`
+- binary download progress can be driven by `sizeBytes` metadata plus HTTP `Content-Length`
 - server state currently persists as a single snapshot row in PostgreSQL
 - document payloads and blobs can live either on local disk or in MinIO/S3-compatible storage
 

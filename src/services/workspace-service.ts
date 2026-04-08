@@ -750,6 +750,8 @@ export class WorkspaceService {
       entryId: entry.id,
       path: entry.path,
       hash: entry.blob.hash,
+      sizeBytes: entry.blob.sizeBytes,
+      mimeType: entry.blob.mimeType,
       entryVersion: entry.entryVersion
     });
 

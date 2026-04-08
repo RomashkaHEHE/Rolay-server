@@ -771,6 +771,33 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
+  /v1/files/{entryId}/blob/uploads/{uploadId}:
+    delete:
+      tags: [files]
+      summary: Cancel pending or active binary blob upload
+      operationId: cancelBlobUpload
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+        - name: uploadId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Upload canceled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelBlobUploadResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
 components:
   securitySchemes:
     bearerAuth:
@@ -1401,8 +1428,22 @@ components:
       properties:
         alreadyExists:
           type: boolean
+        uploadId:
+          type: string
+        hash:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        mimeType:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
         upload:
           $ref: '#/components/schemas/UploadTarget'
+        cancel:
+          $ref: '#/components/schemas/DeleteTarget'
     UploadTarget:
       type: object
       additionalProperties: false
@@ -1418,16 +1459,43 @@ components:
           type: object
           additionalProperties:
             type: string
+    DeleteTarget:
+      type: object
+      additionalProperties: false
+      required: [method, url]
+      properties:
+        method:
+          type: string
+          enum: [DELETE]
+        url:
+          type: string
+          format: uri
     BlobDownloadTicketResponse:
       type: object
       additionalProperties: false
-      required: [hash, url]
+      required: [hash, sizeBytes, mimeType, url]
       properties:
         hash:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        mimeType:
           type: string
         url:
           type: string
           format: uri
+    CancelBlobUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, uploadId, wasActive]
+      properties:
+        ok:
+          type: boolean
+        uploadId:
+          type: string
+        wasActive:
+          type: boolean
     ErrorResponse:
       type: object
       additionalProperties: false

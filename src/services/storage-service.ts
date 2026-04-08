@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import { Client as MinioClient, type ClientOptions as MinioClientOptions } from "minio";
 
 import { AppEnv } from "../config/env";
+import { AppError } from "../core/errors";
 import { BlobObject } from "../domain/types";
 
 interface StoredBlobMetadata {
@@ -21,7 +24,20 @@ interface StorageBackend {
   storeDocument(docId: string, state: Uint8Array): Promise<void>;
   hasBlob(hash: string): Promise<boolean>;
   storeBlob(hash: string, payload: Buffer, mimeType: string): Promise<BlobObject>;
+  storeBlobFromFile(
+    hash: string,
+    filePath: string,
+    mimeType: string,
+    sizeBytes: number
+  ): Promise<BlobObject>;
   loadBlob(hash: string): Promise<{ metadata: BlobObject; payload: Buffer } | null>;
+  loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null>;
+}
+
+interface ActiveUploadRecord {
+  ticketId: string;
+  stagingPath: string;
+  controller: AbortController;
 }
 
 function hashDigest(hash: string): string {
@@ -46,6 +62,19 @@ function buildBlobMetadata(hash: string, payload: Buffer, mimeType: string): Sto
   };
 }
 
+function buildVerifiedBlobMetadata(
+  hash: string,
+  sizeBytes: number,
+  mimeType: string
+): StoredBlobMetadata {
+  return {
+    hash,
+    sizeBytes,
+    mimeType,
+    createdAt: new Date().toISOString()
+  };
+}
+
 function isNotFoundError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) {
     return false;
@@ -61,6 +90,22 @@ function isNotFoundError(error: unknown): boolean {
     code === "NotFound" ||
     code === "NoSuchBucket" ||
     statusCode === 404
+  );
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  const name = "name" in error ? (error as { name?: unknown }).name : undefined;
+  const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+
+  return (
+    name === "AbortError" ||
+    code === "ABORT_ERR" ||
+    code === "ECONNRESET" ||
+    code === "ERR_STREAM_PREMATURE_CLOSE"
   );
 }
 
@@ -144,6 +189,23 @@ class LocalStorageBackend implements StorageBackend {
     return metadata;
   }
 
+  async storeBlobFromFile(
+    hash: string,
+    filePath: string,
+    mimeType: string,
+    sizeBytes: number
+  ): Promise<BlobObject> {
+    await this.ensureReady();
+    const metadata = buildVerifiedBlobMetadata(hash, sizeBytes, mimeType);
+
+    await fs.mkdir(path.dirname(this.blobBinaryPath(hash)), { recursive: true });
+    await fs.rm(this.blobBinaryPath(hash), { force: true });
+    await fs.rename(filePath, this.blobBinaryPath(hash));
+    await fs.writeFile(this.blobMetadataPath(hash), JSON.stringify(metadata, null, 2));
+
+    return metadata;
+  }
+
   async loadBlob(hash: string): Promise<{ metadata: BlobObject; payload: Buffer } | null> {
     await this.ensureReady();
 
@@ -156,6 +218,23 @@ class LocalStorageBackend implements StorageBackend {
       return {
         payload,
         metadata: JSON.parse(metadataRaw) as BlobObject
+      };
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null> {
+    await this.ensureReady();
+
+    try {
+      const metadataRaw = await fs.readFile(this.blobMetadataPath(hash), "utf8");
+      return {
+        metadata: JSON.parse(metadataRaw) as BlobObject,
+        stream: createReadStream(this.blobBinaryPath(hash))
       };
     } catch (error) {
       if (isNotFoundError(error)) {
@@ -275,6 +354,40 @@ class MinioStorageBackend implements StorageBackend {
     return metadata;
   }
 
+  async storeBlobFromFile(
+    hash: string,
+    filePath: string,
+    mimeType: string,
+    sizeBytes: number
+  ): Promise<BlobObject> {
+    await this.ensureReady();
+    const metadata = buildVerifiedBlobMetadata(hash, sizeBytes, mimeType);
+    const metadataPayload = Buffer.from(JSON.stringify(metadata, null, 2));
+
+    await Promise.all([
+      this.client.putObject(
+        this.bucket,
+        this.blobBinaryObjectName(hash),
+        createReadStream(filePath),
+        sizeBytes,
+        {
+          "Content-Type": mimeType
+        }
+      ),
+      this.client.putObject(
+        this.bucket,
+        this.blobMetadataObjectName(hash),
+        metadataPayload,
+        metadataPayload.byteLength,
+        {
+          "Content-Type": "application/json"
+        }
+      )
+    ]);
+
+    return metadata;
+  }
+
   async loadBlob(hash: string): Promise<{ metadata: BlobObject; payload: Buffer } | null> {
     await this.ensureReady();
 
@@ -291,6 +404,28 @@ class MinioStorageBackend implements StorageBackend {
       payload,
       metadata: JSON.parse(metadataRaw.toString("utf8")) as BlobObject
     };
+  }
+
+  async loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null> {
+    await this.ensureReady();
+
+    const metadataRaw = await this.getObjectBuffer(this.blobMetadataObjectName(hash));
+    if (!metadataRaw) {
+      return null;
+    }
+
+    try {
+      const stream = await this.client.getObject(this.bucket, this.blobBinaryObjectName(hash));
+      return {
+        metadata: JSON.parse(metadataRaw.toString("utf8")) as BlobObject,
+        stream
+      };
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   private async initialize(): Promise<void> {
@@ -340,16 +475,28 @@ class MinioStorageBackend implements StorageBackend {
 
 export class StorageService {
   private readonly backend: StorageBackend;
+  private readonly uploadsDir: string;
+  private readonly activeUploads = new Map<string, ActiveUploadRecord>();
+  private readyPromise: Promise<void> | undefined;
 
   constructor(env: AppEnv) {
     this.backend =
       env.storageDriver === "minio"
         ? new MinioStorageBackend(env)
         : new LocalStorageBackend(env);
+    this.uploadsDir = path.resolve(env.localDataDir, "uploads");
   }
 
   async ensureReady(): Promise<void> {
-    await this.backend.ensureReady();
+    if (!this.readyPromise) {
+      this.readyPromise = (async () => {
+        await this.backend.ensureReady();
+        await fs.mkdir(this.uploadsDir, { recursive: true });
+        await this.cleanupStagingDirectory();
+      })();
+    }
+
+    await this.readyPromise;
   }
 
   async loadDocument(docId: string): Promise<Uint8Array | null> {
@@ -368,7 +515,100 @@ export class StorageService {
     return this.backend.storeBlob(hash, payload, mimeType);
   }
 
+  async storeBlobUpload(
+    uploadId: string,
+    hash: string,
+    payload: Readable,
+    mimeType: string,
+    sizeBytes: number
+  ): Promise<BlobObject> {
+    await this.ensureReady();
+
+    const stagingPath = path.join(this.uploadsDir, `${uploadId}.part`);
+    await fs.rm(stagingPath, { force: true });
+
+    const controller = new AbortController();
+    this.activeUploads.set(uploadId, {
+      ticketId: uploadId,
+      stagingPath,
+      controller
+    });
+
+    let receivedBytes = 0;
+    const digest = createHash("sha256");
+    const counter = new Transform({
+      transform(chunk, _encoding, callback) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        receivedBytes += buffer.byteLength;
+        if (receivedBytes > sizeBytes) {
+          callback(
+            new AppError(400, "payload_too_large", "Blob size does not match upload ticket.")
+          );
+          return;
+        }
+
+        digest.update(buffer);
+        callback(null, buffer);
+      }
+    });
+
+    try {
+      await pipeline(payload, counter, createWriteStream(stagingPath), {
+        signal: controller.signal
+      });
+
+      if (receivedBytes !== sizeBytes) {
+        throw new AppError(400, "payload_too_large", "Blob size does not match upload ticket.");
+      }
+
+      const calculatedHash = `sha256:${digest.digest("base64")}`;
+      if (calculatedHash !== hash) {
+        throw new AppError(400, "blob_hash_mismatch", "Uploaded blob hash does not match ticket.");
+      }
+
+      return await this.backend.storeBlobFromFile(hash, stagingPath, mimeType, sizeBytes);
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      if (controller.signal.aborted) {
+        throw new AppError(409, "upload_canceled", "Upload was canceled.");
+      }
+      if (isAbortLikeError(error)) {
+        throw new AppError(400, "upload_incomplete", "Upload did not complete.");
+      }
+      throw error;
+    } finally {
+      this.activeUploads.delete(uploadId);
+      await fs.rm(stagingPath, { force: true });
+    }
+  }
+
+  async cancelActiveUpload(uploadId: string): Promise<boolean> {
+    const activeUpload = this.activeUploads.get(uploadId);
+    if (!activeUpload) {
+      return false;
+    }
+
+    activeUpload.controller.abort();
+    await fs.rm(activeUpload.stagingPath, { force: true });
+    return true;
+  }
+
   async loadBlob(hash: string): Promise<{ metadata: BlobObject; payload: Buffer } | null> {
     return this.backend.loadBlob(hash);
+  }
+
+  async loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null> {
+    return this.backend.loadBlobStream(hash);
+  }
+
+  private async cleanupStagingDirectory(): Promise<void> {
+    const entries = await fs.readdir(this.uploadsDir, { withFileTypes: true });
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".part"))
+        .map((entry) => fs.rm(path.join(this.uploadsDir, entry.name), { force: true }))
+    );
   }
 }
