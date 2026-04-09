@@ -1,5 +1,6 @@
 import { cloneValue } from "../core/clone";
 import { AppError } from "../core/errors";
+import { normalizeSha256Hash } from "../core/hashes";
 import { createId, createInviteCode } from "../core/ids";
 import { normalizePath, suggestConflictPath } from "../core/paths";
 import {
@@ -731,8 +732,19 @@ export class WorkspaceService {
       };
     }
 
+    let normalizedHash: string;
+    try {
+      normalizedHash = normalizeSha256Hash(operation.hash);
+    } catch {
+      throw new AppError(
+        400,
+        "invalid_operation",
+        'Blob revision commit requires a valid "sha256:<digest>" hash.'
+      );
+    }
+
     entry.blob = {
-      hash: operation.hash,
+      hash: normalizedHash,
       sizeBytes: operation.sizeBytes,
       mimeType: operation.mimeType
     };

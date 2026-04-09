@@ -9,6 +9,12 @@ import { Client as MinioClient, type ClientOptions as MinioClientOptions } from 
 
 import { AppEnv } from "../config/env";
 import { AppError } from "../core/errors";
+import {
+  formatSha256Hash,
+  normalizeSha256Hash,
+  sha256HashFromPayload,
+  trySha256HashDigestTokens
+} from "../core/hashes";
 import { BlobObject } from "../domain/types";
 
 interface StoredBlobMetadata {
@@ -41,21 +47,30 @@ interface ActiveUploadRecord {
 }
 
 function hashDigest(hash: string): string {
-  return hash.replace(/^sha256:/, "").replace(/[^A-Za-z0-9_-]/g, "_");
+  return (
+    trySha256HashDigestTokens(hash)[0] ??
+    hash.replace(/^sha256:/, "").replace(/[^A-Za-z0-9_-]/g, "_")
+  );
 }
 
-function verifyBlobHash(hash: string, payload: Buffer): void {
-  const digest = createHash("sha256").update(payload).digest("base64");
-  const normalizedHash = `sha256:${digest}`;
-  if (normalizedHash !== hash) {
-    throw new Error(`Blob hash mismatch: expected ${hash}, got ${normalizedHash}`);
+function hashDigestCandidates(hash: string): string[] {
+  return trySha256HashDigestTokens(hash);
+}
+
+function verifyBlobHash(hash: string, payload: Buffer): string {
+  const expectedHash = normalizeSha256Hash(hash);
+  const actualHash = sha256HashFromPayload(payload);
+  if (actualHash !== expectedHash) {
+    throw new Error(`Blob hash mismatch: expected ${expectedHash}, got ${actualHash}`);
   }
+
+  return expectedHash;
 }
 
 function buildBlobMetadata(hash: string, payload: Buffer, mimeType: string): StoredBlobMetadata {
-  verifyBlobHash(hash, payload);
+  const normalizedHash = verifyBlobHash(hash, payload);
   return {
-    hash,
+    hash: normalizedHash,
     sizeBytes: payload.byteLength,
     mimeType,
     createdAt: new Date().toISOString()
@@ -67,8 +82,9 @@ function buildVerifiedBlobMetadata(
   sizeBytes: number,
   mimeType: string
 ): StoredBlobMetadata {
+  const normalizedHash = normalizeSha256Hash(hash);
   return {
-    hash,
+    hash: normalizedHash,
     sizeBytes,
     mimeType,
     createdAt: new Date().toISOString()
@@ -167,15 +183,19 @@ class LocalStorageBackend implements StorageBackend {
   async hasBlob(hash: string): Promise<boolean> {
     await this.ensureReady();
 
-    try {
-      await fs.access(this.blobBinaryPath(hash));
-      return true;
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        return false;
+    for (const digest of hashDigestCandidates(hash)) {
+      try {
+        await fs.access(this.blobBinaryPathFromDigest(digest));
+        return true;
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          continue;
+        }
+        throw error;
       }
-      throw error;
     }
+
+    return false;
   }
 
   async storeBlob(hash: string, payload: Buffer, mimeType: string): Promise<BlobObject> {
@@ -209,39 +229,47 @@ class LocalStorageBackend implements StorageBackend {
   async loadBlob(hash: string): Promise<{ metadata: BlobObject; payload: Buffer } | null> {
     await this.ensureReady();
 
-    try {
-      const [payload, metadataRaw] = await Promise.all([
-        fs.readFile(this.blobBinaryPath(hash)),
-        fs.readFile(this.blobMetadataPath(hash), "utf8")
-      ]);
+    for (const digest of hashDigestCandidates(hash)) {
+      try {
+        const [payload, metadataRaw] = await Promise.all([
+          fs.readFile(this.blobBinaryPathFromDigest(digest)),
+          fs.readFile(this.blobMetadataPathFromDigest(digest), "utf8")
+        ]);
 
-      return {
-        payload,
-        metadata: JSON.parse(metadataRaw) as BlobObject
-      };
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        return null;
+        return {
+          payload,
+          metadata: JSON.parse(metadataRaw) as BlobObject
+        };
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          continue;
+        }
+        throw error;
       }
-      throw error;
     }
+
+    return null;
   }
 
   async loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null> {
     await this.ensureReady();
 
-    try {
-      const metadataRaw = await fs.readFile(this.blobMetadataPath(hash), "utf8");
-      return {
-        metadata: JSON.parse(metadataRaw) as BlobObject,
-        stream: createReadStream(this.blobBinaryPath(hash))
-      };
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        return null;
+    for (const digest of hashDigestCandidates(hash)) {
+      try {
+        const metadataRaw = await fs.readFile(this.blobMetadataPathFromDigest(digest), "utf8");
+        return {
+          metadata: JSON.parse(metadataRaw) as BlobObject,
+          stream: createReadStream(this.blobBinaryPathFromDigest(digest))
+        };
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          continue;
+        }
+        throw error;
       }
-      throw error;
     }
+
+    return null;
   }
 
   private documentPath(docId: string): string {
@@ -249,12 +277,18 @@ class LocalStorageBackend implements StorageBackend {
   }
 
   private blobBinaryPath(hash: string): string {
-    const digest = hashDigest(hash);
-    return path.join(this.blobsDir, digest.slice(0, 2), `${digest}.bin`);
+    return this.blobBinaryPathFromDigest(hashDigest(hash));
   }
 
   private blobMetadataPath(hash: string): string {
-    const digest = hashDigest(hash);
+    return this.blobMetadataPathFromDigest(hashDigest(hash));
+  }
+
+  private blobBinaryPathFromDigest(digest: string): string {
+    return path.join(this.blobsDir, digest.slice(0, 2), `${digest}.bin`);
+  }
+
+  private blobMetadataPathFromDigest(digest: string): string {
     return path.join(this.blobsDir, digest.slice(0, 2), `${digest}.json`);
   }
 }
@@ -314,15 +348,19 @@ class MinioStorageBackend implements StorageBackend {
   async hasBlob(hash: string): Promise<boolean> {
     await this.ensureReady();
 
-    try {
-      await this.client.statObject(this.bucket, this.blobBinaryObjectName(hash));
-      return true;
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        return false;
+    for (const digest of hashDigestCandidates(hash)) {
+      try {
+        await this.client.statObject(this.bucket, this.blobBinaryObjectNameFromDigest(digest));
+        return true;
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          continue;
+        }
+        throw error;
       }
-      throw error;
     }
+
+    return false;
   }
 
   async storeBlob(hash: string, payload: Buffer, mimeType: string): Promise<BlobObject> {
@@ -391,41 +429,52 @@ class MinioStorageBackend implements StorageBackend {
   async loadBlob(hash: string): Promise<{ metadata: BlobObject; payload: Buffer } | null> {
     await this.ensureReady();
 
-    const [payload, metadataRaw] = await Promise.all([
-      this.getObjectBuffer(this.blobBinaryObjectName(hash)),
-      this.getObjectBuffer(this.blobMetadataObjectName(hash))
-    ]);
+    for (const digest of hashDigestCandidates(hash)) {
+      const [payload, metadataRaw] = await Promise.all([
+        this.getObjectBuffer(this.blobBinaryObjectNameFromDigest(digest)),
+        this.getObjectBuffer(this.blobMetadataObjectNameFromDigest(digest))
+      ]);
 
-    if (!payload || !metadataRaw) {
-      return null;
+      if (!payload || !metadataRaw) {
+        continue;
+      }
+
+      return {
+        payload,
+        metadata: JSON.parse(metadataRaw.toString("utf8")) as BlobObject
+      };
     }
 
-    return {
-      payload,
-      metadata: JSON.parse(metadataRaw.toString("utf8")) as BlobObject
-    };
+    return null;
   }
 
   async loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null> {
     await this.ensureReady();
 
-    const metadataRaw = await this.getObjectBuffer(this.blobMetadataObjectName(hash));
-    if (!metadataRaw) {
-      return null;
+    for (const digest of hashDigestCandidates(hash)) {
+      const metadataRaw = await this.getObjectBuffer(this.blobMetadataObjectNameFromDigest(digest));
+      if (!metadataRaw) {
+        continue;
+      }
+
+      try {
+        const stream = await this.client.getObject(
+          this.bucket,
+          this.blobBinaryObjectNameFromDigest(digest)
+        );
+        return {
+          metadata: JSON.parse(metadataRaw.toString("utf8")) as BlobObject,
+          stream
+        };
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          continue;
+        }
+        throw error;
+      }
     }
 
-    try {
-      const stream = await this.client.getObject(this.bucket, this.blobBinaryObjectName(hash));
-      return {
-        metadata: JSON.parse(metadataRaw.toString("utf8")) as BlobObject,
-        stream
-      };
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        return null;
-      }
-      throw error;
-    }
+    return null;
   }
 
   private async initialize(): Promise<void> {
@@ -459,12 +508,18 @@ class MinioStorageBackend implements StorageBackend {
   }
 
   private blobBinaryObjectName(hash: string): string {
-    const digest = hashDigest(hash);
-    return this.objectName("blobs", digest.slice(0, 2), `${digest}.bin`);
+    return this.blobBinaryObjectNameFromDigest(hashDigest(hash));
   }
 
   private blobMetadataObjectName(hash: string): string {
-    const digest = hashDigest(hash);
+    return this.blobMetadataObjectNameFromDigest(hashDigest(hash));
+  }
+
+  private blobBinaryObjectNameFromDigest(digest: string): string {
+    return this.objectName("blobs", digest.slice(0, 2), `${digest}.bin`);
+  }
+
+  private blobMetadataObjectNameFromDigest(digest: string): string {
     return this.objectName("blobs", digest.slice(0, 2), `${digest}.json`);
   }
 
@@ -571,21 +626,22 @@ export class StorageService {
         );
       }
 
-      const calculatedHash = `sha256:${digest.digest("base64")}`;
-      if (calculatedHash !== hash) {
+      const expectedHash = normalizeSha256Hash(hash);
+      const calculatedHash = formatSha256Hash(digest.digest());
+      if (calculatedHash !== expectedHash) {
         throw new AppError(
           400,
           "blob_hash_mismatch",
           "Uploaded blob hash does not match ticket.",
           {
-            expectedHash: hash,
+            expectedHash,
             actualHash: calculatedHash,
             receivedSizeBytes: receivedBytes
           }
         );
       }
 
-      return await this.backend.storeBlobFromFile(hash, stagingPath, mimeType, sizeBytes);
+      return await this.backend.storeBlobFromFile(expectedHash, stagingPath, mimeType, sizeBytes);
     } catch (error) {
       if (error instanceof AppError) {
         throw error;

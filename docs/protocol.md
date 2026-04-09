@@ -315,6 +315,11 @@ Request includes:
 - `sizeBytes`
 - `mimeType`
 
+Hash notes:
+
+- client may send `sha256` digests in hex or base64 form
+- server normalizes accepted digests to canonical `sha256:<base64>` before storing them or returning them in responses
+
 Response now includes:
 
 - `alreadyExists`
@@ -354,6 +359,8 @@ Response:
 - `ok`
 - `hash`
 - `sizeBytes`
+
+Returned `hash` is canonical `sha256:<base64>` even if the upload ticket was created from a hex digest.
 
 ### Cancel upload
 

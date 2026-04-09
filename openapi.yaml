@@ -1458,6 +1458,7 @@ paths:
       properties:
         hash:
           type: string
+          description: SHA-256 digest in `sha256:<digest>` form. The digest may be hex or base64; the server normalizes accepted values to canonical base64 in responses.
         sizeBytes:
           type: integer
           minimum: 0
@@ -1474,6 +1475,7 @@ paths:
           type: string
         hash:
           type: string
+          description: Canonical `sha256:<base64>` digest for the uploaded blob.
         sizeBytes:
           type: integer
           minimum: 0
@@ -1519,6 +1521,7 @@ paths:
       properties:
         hash:
           type: string
+          description: Canonical `sha256:<base64>` digest for the current blob revision.
         sizeBytes:
           type: integer
           minimum: 0
@@ -1547,6 +1550,7 @@ paths:
           type: boolean
         hash:
           type: string
+          description: Canonical `sha256:<base64>` digest for the uploaded blob.
         sizeBytes:
           type: integer
           minimum: 0

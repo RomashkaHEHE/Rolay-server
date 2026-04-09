@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 
 import { AppEnv } from "../config/env";
 import { AppError } from "../core/errors";
+import { normalizeSha256Hash as normalizeSha256Digest } from "../core/hashes";
 import { createOpaqueToken } from "../core/ids";
 import {
   BlobDownloadTicketRecord,
@@ -174,18 +175,18 @@ export class FileService {
   ): Promise<BlobUploadResponse> {
     const context = this.requireEntryAccess(actor.id, entryId);
     this.assertBinaryEntry(context.entry);
-    this.assertSha256Hash(hash);
+    const normalizedHash = this.normalizeSha256Hash(hash);
 
     if (
-      context.entry.blob?.hash === hash ||
-      this.state.blobObjects.has(hash) ||
-      await this.storage.hasBlob(hash)
+      context.entry.blob?.hash === normalizedHash ||
+      this.state.blobObjects.has(normalizedHash) ||
+      await this.storage.hasBlob(normalizedHash)
     ) {
       // Blob storage is content-addressed, so identical payloads can skip the byte transfer and
       // only publish a new tree revision.
       return {
         alreadyExists: true,
-        hash,
+        hash: normalizedHash,
         sizeBytes,
         mimeType
       };
@@ -196,7 +197,7 @@ export class FileService {
       workspaceId: context.workspace.workspace.id,
       entryId: context.entry.id,
       userId: actor.id,
-      hash,
+      hash: normalizedHash,
       sizeBytes,
       mimeType,
       expiresAt: this.createExpiry(this.env.blobTicketTtlSeconds)
@@ -207,7 +208,7 @@ export class FileService {
     return {
       alreadyExists: false,
       uploadId: ticket.ticketId,
-      hash,
+      hash: normalizedHash,
       sizeBytes,
       mimeType,
       expiresAt: ticket.expiresAt,
@@ -389,13 +390,20 @@ export class FileService {
   }
 
   private assertSha256Hash(hash: string): void {
-    if (!/^sha256:[A-Za-z0-9+/=_-]{6,}$/.test(hash)) {
+    try {
+      normalizeSha256Digest(hash);
+    } catch {
       throw new AppError(
         400,
         "invalid_request",
-        'Field "hash" must use the "sha256:<digest>" format.'
+        'Field "hash" must use the "sha256:<digest>" format with a valid hex or base64 SHA-256 digest.'
       );
     }
+  }
+
+  private normalizeSha256Hash(hash: string): string {
+    this.assertSha256Hash(hash);
+    return normalizeSha256Digest(hash);
   }
 
   private createExpiry(ttlSeconds: number): string {

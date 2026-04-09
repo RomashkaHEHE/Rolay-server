@@ -62,6 +62,10 @@ function createSha256Hash(payload: Buffer): string {
   return `sha256:${createHash("sha256").update(payload).digest("base64")}`;
 }
 
+function createSha256HashHex(payload: Buffer): string {
+  return `sha256:${createHash("sha256").update(payload).digest("hex")}`;
+}
+
 function decodeCrdtBootstrapState(state: string): Y.Doc {
   const document = new Y.Doc();
   Y.applyUpdate(document, Buffer.from(state, "base64"));
@@ -1520,6 +1524,131 @@ test("authenticated blob content upload endpoint accepts raw octet-stream and re
     mismatchUploadResponse.json().error.details.receivedSizeBytes,
     payload.byteLength
   );
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("blob uploads accept hex sha256 digests and normalize them to canonical storage keys", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Hex Hash Upload"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_hex_binary",
+          type: "create_binary_placeholder",
+          path: "attachments/recording.bin"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const binaryEntry = createEntryResponse.json().results[0].entry;
+  const payload = Buffer.from("voice-note-binary", "utf8");
+  const canonicalHash = createSha256Hash(payload);
+  const hexHash = createSha256HashHex(payload);
+
+  const uploadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash: hexHash,
+      sizeBytes: payload.byteLength,
+      mimeType: "application/octet-stream"
+    }
+  });
+
+  assert.equal(uploadTicketResponse.statusCode, 200);
+  assert.equal(uploadTicketResponse.json().hash, canonicalHash);
+  const uploadId = uploadTicketResponse.json().uploadId;
+
+  const uploadContentResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${binaryEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "application/octet-stream"
+    },
+    payload
+  });
+
+  assert.equal(uploadContentResponse.statusCode, 200);
+  assert.equal(uploadContentResponse.json().hash, canonicalHash);
+
+  const commitResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_hex_commit",
+          type: "commit_blob_revision",
+          entryId: binaryEntry.id,
+          hash: hexHash,
+          sizeBytes: payload.byteLength,
+          mimeType: "application/octet-stream",
+          preconditions: {
+            entryVersion: binaryEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(commitResponse.statusCode, 200);
+  assert.equal(commitResponse.json().results[0].entry.blob.hash, canonicalHash);
+
+  const downloadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/download-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(downloadTicketResponse.statusCode, 200);
+  assert.equal(downloadTicketResponse.json().hash, canonicalHash);
 
   await app.close();
   await cleanupTestEnv(env);

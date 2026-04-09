@@ -42,6 +42,7 @@ room tree sync, and blob-based attachment storage.
 - realtime CRDT is used only for markdown content
 - room tree state is server-authoritative, not CRDT-based
 - binary files are synced as blob objects addressed by `sha256`
+- server accepts `sha256` digests in hex or base64 form and normalizes them to canonical base64 in API responses and persisted state
 - binary uploads are staged and streamed through the server before `commit_blob_revision`
 - desktop clients can upload blob bytes through an authenticated API endpoint instead of relying only on raw ticket URLs
 - binary download progress can be driven by `sizeBytes` metadata plus HTTP `Content-Length`
