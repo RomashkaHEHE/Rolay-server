@@ -1300,7 +1300,7 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
     method: "PUT",
     url: uploadPath,
     headers: {
-      "content-type": "image/png"
+      "content-type": "application/octet-stream"
     },
     payload: binaryPayload
   });
@@ -1364,6 +1364,162 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
   assert.equal(downloadResponse.headers["content-type"], "image/png");
   assert.equal(downloadResponse.headers["content-length"], String(binaryPayload.byteLength));
   assert.equal(downloadResponse.body, binaryPayload.toString("utf8"));
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("authenticated blob content upload endpoint accepts raw octet-stream and returns detailed hash mismatch errors", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Authenticated Blob Upload"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_auth_binary",
+          type: "create_binary_placeholder",
+          path: "attachments/audio.ogg"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const binaryEntry = createEntryResponse.json().results[0].entry;
+  const payload = Buffer.from("voice-note-binary", "utf8");
+  const hash = createSha256Hash(payload);
+
+  const uploadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "audio/ogg"
+    }
+  });
+
+  assert.equal(uploadTicketResponse.statusCode, 200);
+  const uploadId = uploadTicketResponse.json().uploadId;
+
+  const uploadContentResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${binaryEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "application/octet-stream"
+    },
+    payload
+  });
+
+  assert.equal(uploadContentResponse.statusCode, 200);
+  assert.deepEqual(uploadContentResponse.json(), {
+    ok: true,
+    hash,
+    sizeBytes: payload.byteLength
+  });
+
+  const commitResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_auth_binary_commit",
+          type: "commit_blob_revision",
+          entryId: binaryEntry.id,
+          hash,
+          sizeBytes: payload.byteLength,
+          mimeType: "audio/ogg",
+          preconditions: {
+            entryVersion: binaryEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(commitResponse.statusCode, 200);
+  assert.equal(commitResponse.json().results[0].entry.blob.hash, hash);
+
+  const mismatchTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash: createSha256Hash(Buffer.from("different-payload", "utf8")),
+      sizeBytes: payload.byteLength,
+      mimeType: "audio/ogg"
+    }
+  });
+
+  assert.equal(mismatchTicketResponse.statusCode, 200);
+
+  const mismatchUploadResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${binaryEntry.id}/blob/uploads/${mismatchTicketResponse.json().uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "application/octet-stream"
+    },
+    payload
+  });
+
+  assert.equal(mismatchUploadResponse.statusCode, 400);
+  assert.equal(mismatchUploadResponse.json().error.code, "blob_hash_mismatch");
+  assert.equal(
+    mismatchUploadResponse.json().error.details.expectedHash,
+    mismatchTicketResponse.json().hash
+  );
+  assert.equal(
+    mismatchUploadResponse.json().error.details.actualHash,
+    hash
+  );
+  assert.equal(
+    mismatchUploadResponse.json().error.details.receivedSizeBytes,
+    payload.byteLength
+  );
 
   await app.close();
   await cleanupTestEnv(env);

@@ -331,6 +331,30 @@ Behavior:
 - if `alreadyExists=true`, client should skip byte upload and go directly to `commit_blob_revision`
 - if `alreadyExists=false`, client should upload bytes to `upload.url`
 
+### Authenticated blob content upload
+
+- `PUT /v1/files/{entryId}/blob/uploads/{uploadId}/content`
+
+Purpose:
+
+- normal authenticated API upload path for desktop clients
+- avoids depending entirely on the raw `/_storage/upload/{ticketId}` transport
+
+Expected request:
+
+- Bearer access token
+- raw binary body
+- usually `Content-Type: application/octet-stream`
+- `Content-Length`
+
+The server also accepts the ticket mime type as transport `Content-Type`.
+
+Response:
+
+- `ok`
+- `hash`
+- `sizeBytes`
+
 ### Cancel upload
 
 - `DELETE /v1/files/{entryId}/blob/uploads/{uploadId}`

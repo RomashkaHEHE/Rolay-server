@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+
 import { AppEnv } from "../config/env";
 import { AppError } from "../core/errors";
 import { createOpaqueToken } from "../core/ids";
@@ -52,6 +54,12 @@ interface CancelBlobUploadResponse {
   ok: true;
   uploadId: string;
   wasActive: boolean;
+}
+
+interface BlobUploadContentResponse {
+  ok: true;
+  hash: string;
+  sizeBytes: number;
 }
 
 interface BlobDownloadResponse {
@@ -274,6 +282,36 @@ export class FileService {
     };
   }
 
+  async uploadBlobContent(
+    actor: User,
+    entryId: string,
+    uploadId: string,
+    payload: Readable,
+    requestContentType?: string
+  ): Promise<BlobUploadContentResponse> {
+    const context = this.requireEntryAccess(actor.id, entryId);
+    this.assertBinaryEntry(context.entry);
+
+    const ticket = this.requireBlobUploadTicket(uploadId);
+    if (ticket.entryId !== context.entry.id) {
+      throw new AppError(404, "upload_ticket_not_found", "Upload ticket not found.");
+    }
+    if (ticket.userId !== actor.id && !actor.isAdmin) {
+      throw new AppError(403, "forbidden", "Only the uploader or admin can upload blob content.");
+    }
+
+    return this.finishBlobUpload(ticket, payload, requestContentType);
+  }
+
+  async uploadBlobContentByTicket(
+    uploadId: string,
+    payload: Readable,
+    requestContentType?: string
+  ): Promise<BlobUploadContentResponse> {
+    const ticket = this.requireBlobUploadTicket(uploadId);
+    return this.finishBlobUpload(ticket, payload, requestContentType);
+  }
+
   private requireWorkspaceAccess(userId: string, workspaceId: string): StoredWorkspace {
     const workspace = this.state.workspaces.get(workspaceId);
     if (!workspace) {
@@ -362,5 +400,76 @@ export class FileService {
 
   private createExpiry(ttlSeconds: number): string {
     return new Date(Date.now() + ttlSeconds * 1000).toISOString();
+  }
+
+  private requireBlobUploadTicket(uploadId: string): BlobUploadTicketRecord {
+    const ticket = this.state.blobUploadTickets.get(uploadId);
+    if (!ticket) {
+      throw new AppError(404, "upload_ticket_not_found", "Upload ticket not found.");
+    }
+    if (Date.parse(ticket.expiresAt) <= Date.now()) {
+      this.state.blobUploadTickets.delete(uploadId);
+      throw new AppError(404, "upload_ticket_not_found", "Upload ticket not found.");
+    }
+
+    return ticket;
+  }
+
+  private async finishBlobUpload(
+    ticket: BlobUploadTicketRecord,
+    payload: Readable,
+    requestContentType?: string
+  ): Promise<BlobUploadContentResponse> {
+    this.assertBlobTransportContentType(ticket.mimeType, requestContentType);
+
+    const storedBlob = await this.storage.storeBlobUpload(
+      ticket.ticketId,
+      ticket.hash,
+      payload,
+      ticket.mimeType,
+      ticket.sizeBytes
+    );
+    this.state.blobObjects.set(storedBlob.hash, storedBlob);
+    this.state.blobUploadTickets.delete(ticket.ticketId);
+    await this.stateStore.saveState(this.state);
+
+    return {
+      ok: true,
+      hash: storedBlob.hash,
+      sizeBytes: storedBlob.sizeBytes
+    };
+  }
+
+  private assertBlobTransportContentType(
+    ticketMimeType: string,
+    requestContentType: string | undefined
+  ): void {
+    if (!requestContentType || requestContentType.trim() === "") {
+      return;
+    }
+
+    const normalized = requestContentType.split(";")[0]?.trim().toLowerCase();
+    if (!normalized) {
+      return;
+    }
+
+    if (
+      normalized === "application/octet-stream" ||
+      normalized === ticketMimeType.toLowerCase()
+    ) {
+      return;
+    }
+
+    throw new AppError(
+      400,
+      "invalid_request",
+      "Blob transport content-type is not allowed for this upload ticket.",
+      {
+        allowedContentTypes: [
+          "application/octet-stream",
+          ticketMimeType
+        ]
+      }
+    );
   }
 }

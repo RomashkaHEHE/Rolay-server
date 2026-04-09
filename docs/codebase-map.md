@@ -94,6 +94,7 @@ Each route module is intentionally thin. If you need actual behavior, jump from 
   - markdown bootstrap
   - CRDT token
   - blob upload ticket
+  - authenticated blob content upload
   - blob download ticket
   - cancel blob upload
 
@@ -182,6 +183,7 @@ This is another critical split.
 ### Binary
 
 - route: `POST /v1/files/{entryId}/blob/upload-ticket`
+- route: `PUT /v1/files/{entryId}/blob/uploads/{uploadId}/content`
 - route: `DELETE /v1/files/{entryId}/blob/uploads/{uploadId}`
 - route: `POST /v1/files/{entryId}/blob/download-ticket`
 - storage implementation: `src/services/storage-service.ts`

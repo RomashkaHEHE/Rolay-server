@@ -1,4 +1,5 @@
 import { FastifyPluginAsync } from "fastify";
+import { Readable } from "node:stream";
 
 import { AppError } from "../../core/errors";
 import { requireAuth } from "../../core/http-auth";
@@ -100,6 +101,32 @@ const filesRoutes: FastifyPluginAsync = async (app) => {
       requireString(params, "entryId"),
       requireString(params, "uploadId")
     );
+  });
+
+  await app.register(async (rawUploadApp) => {
+    rawUploadApp.addContentTypeParser(/^[^;]+(?:;.*)?$/, (_request, payload, done) => {
+      done(null, payload);
+    });
+
+    rawUploadApp.put("/v1/files/:entryId/blob/uploads/:uploadId/content", async (request) => {
+      const principal = requireAuth(rawUploadApp, request);
+      const params = asObject(request.params, "Expected route params.");
+      const body = request.body;
+
+      if (!(body instanceof Readable)) {
+        throw new AppError(400, "invalid_request", "Upload body must be binary.");
+      }
+
+      return rawUploadApp.rolay.files.uploadBlobContent(
+        principal.user,
+        requireString(params, "entryId"),
+        requireString(params, "uploadId"),
+        body,
+        typeof request.headers["content-type"] === "string"
+          ? request.headers["content-type"]
+          : undefined
+      );
+    });
   });
 };
 

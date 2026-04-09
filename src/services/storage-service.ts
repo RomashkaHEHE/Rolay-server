@@ -560,12 +560,29 @@ export class StorageService {
       });
 
       if (receivedBytes !== sizeBytes) {
-        throw new AppError(400, "payload_too_large", "Blob size does not match upload ticket.");
+        throw new AppError(
+          400,
+          "payload_too_large",
+          "Blob size does not match upload ticket.",
+          {
+            expectedSizeBytes: sizeBytes,
+            receivedSizeBytes: receivedBytes
+          }
+        );
       }
 
       const calculatedHash = `sha256:${digest.digest("base64")}`;
       if (calculatedHash !== hash) {
-        throw new AppError(400, "blob_hash_mismatch", "Uploaded blob hash does not match ticket.");
+        throw new AppError(
+          400,
+          "blob_hash_mismatch",
+          "Uploaded blob hash does not match ticket.",
+          {
+            expectedHash: hash,
+            actualHash: calculatedHash,
+            receivedSizeBytes: receivedBytes
+          }
+        );
       }
 
       return await this.backend.storeBlobFromFile(hash, stagingPath, mimeType, sizeBytes);

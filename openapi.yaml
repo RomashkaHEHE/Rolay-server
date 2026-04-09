@@ -798,7 +798,43 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
-components:
+  /v1/files/{entryId}/blob/uploads/{uploadId}/content:
+    put:
+      tags: [files]
+      summary: Upload binary blob bytes through the authenticated API
+      operationId: uploadBlobContent
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+        - name: uploadId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Blob bytes uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobUploadContentResponse'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  components:
   securitySchemes:
     bearerAuth:
       type: http
@@ -1387,7 +1423,13 @@ components:
       type: object
       additionalProperties: false
       required:
-        [workspaceId, encoding, includesState, documentCount, totalStateBytes, totalEncodedBytes, documents]
+        - workspaceId
+        - encoding
+        - includesState
+        - documentCount
+        - totalStateBytes
+        - totalEncodedBytes
+        - documents
       properties:
         workspaceId:
           type: string
@@ -1496,6 +1538,18 @@ components:
           type: string
         wasActive:
           type: boolean
+    BlobUploadContentResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, hash, sizeBytes]
+      properties:
+        ok:
+          type: boolean
+        hash:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
     ErrorResponse:
       type: object
       additionalProperties: false
