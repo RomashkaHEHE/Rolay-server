@@ -26,6 +26,7 @@ The protocol uses:
 - REST JSON for auth, room management, tree mutations, bootstrap, and blob tickets
 - SSE for room events and settings/admin events
 - `Yjs` WebSocket for live Markdown collaboration
+- drawing WebSocket for live Excalidraw single-editor sessions
 
 ## Authentication
 
@@ -198,6 +199,11 @@ Binary entries may also have:
 - `mimeType`
 - `blob`
 
+Excalidraw entries may also have:
+
+- `mimeType`
+- `blob`
+
 ### Room event stream
 
 - `GET /v1/workspaces/{workspaceId}/events?cursor=...`
@@ -224,6 +230,7 @@ Supported operation types:
 
 - `create_folder`
 - `create_markdown`
+- `create_excalidraw`
 - `create_binary_placeholder`
 - `rename_entry`
 - `move_entry`
@@ -236,6 +243,67 @@ Important behavior:
 - operations are idempotent by `opId`
 - conflicts use `preconditions`
 - path collisions can return `suggestedPath`
+- `create_excalidraw` requires a path ending in `.excalidraw.md`
+- serialized Excalidraw file content still uses blob upload plus `commit_blob_revision`
+
+## Excalidraw Live Sessions
+
+### Drawing token
+
+- `POST /v1/files/{entryId}/drawing-token`
+
+Rules:
+
+- entry must be `kind="excalidraw"`
+- caller must be a room member
+- token is short-lived and used only for `/v1/drawings`
+
+### Lease and control
+
+- `POST /v1/drawings/{entryId}/lease/acquire`
+- `POST /v1/drawings/{entryId}/lease/release`
+- `POST /v1/drawings/{entryId}/control-requests`
+- `POST /v1/drawings/{entryId}/control-requests/{requestId}/approve`
+- `POST /v1/drawings/{entryId}/control-requests/{requestId}/deny`
+
+Rules:
+
+- only one active editor lease exists per drawing
+- any room member can acquire a free lease
+- if a lease already exists, another member can only request control
+- there is no force takeover in `v1`
+- only the current editor can approve or deny the pending request
+- websocket disconnect or missed heartbeat releases the lease
+
+### Drawing websocket
+
+- `/v1/drawings?token=...`
+
+Server sends:
+
+- `drawing.ready`
+- `lease.updated`
+- `control.requested`
+- `control.resolved`
+- `scene.updated`
+- `pointer.updated`
+- `pointer.cleared`
+- `error`
+
+Client sends:
+
+- `lease.heartbeat`
+- `scene.publish`
+- `pointer.publish`
+
+Important behavior:
+
+- live Excalidraw is single-editor only in `v1`
+- `scene.publish` accepts full scene snapshots, not diffs
+- only the current editor connection may publish scene or pointer updates
+- pointer uses scene-space coordinates
+- latest scene snapshot is stored separately for reconnect hydration
+- the serialized `.excalidraw.md` file remains the blob-backed persistent file and fallback layer
 
 ## Markdown Bootstrap And Live CRDT
 

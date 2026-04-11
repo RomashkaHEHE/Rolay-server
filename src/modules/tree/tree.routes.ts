@@ -21,6 +21,7 @@ import {
 const TREE_OPERATION_TYPES = [
   "create_folder",
   "create_markdown",
+  "create_excalidraw",
   "create_binary_placeholder",
   "rename_entry",
   "move_entry",

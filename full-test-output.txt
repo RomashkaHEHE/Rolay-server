@@ -1,0 +1,108 @@
+TAP version 13
+# Subtest: memory state snapshot round-trip preserves persisted records
+ok 1 - memory state snapshot round-trip preserves persisted records
+  ---
+  duration_ms: 4.1771
+  ...
+# Subtest: GET /ready returns health payload
+ok 2 - GET /ready returns health payload
+  ---
+  duration_ms: 166.4503
+  ...
+# Subtest: auth login and refresh issue opaque bearer tokens with global role
+ok 3 - auth login and refresh issue opaque bearer tokens with global role
+  ---
+  duration_ms: 32.0901
+  ...
+# Subtest: users can change password when they know the current one
+ok 4 - users can change password when they know the current one
+  ---
+  duration_ms: 29.4214
+  ...
+# Subtest: seed admin password is updated when env password changes on startup
+ok 5 - seed admin password is updated when env password changes on startup
+  ---
+  duration_ms: 1.6768
+  ...
+# Subtest: settings events are filtered for regular users and admins
+ok 6 - settings events are filtered for regular users and admins
+  ---
+  duration_ms: 35.4567
+  ...
+# Subtest: settings SSE stream sends ready event and supports cursor resume
+ok 7 - settings SSE stream sends ready event and supports cursor resume
+  ---
+  duration_ms: 4071.508
+  ...
+# Subtest: writer can create duplicate-named rooms, manage invite key, and members can edit
+ok 8 - writer can create duplicate-named rooms, manage invite key, and members can edit
+  ---
+  duration_ms: 45.4238
+  ...
+# Subtest: admin can manage users and rooms
+ok 9 - admin can manage users and rooms
+  ---
+  duration_ms: 28.9555
+  ...
+# Subtest: file endpoints issue CRDT tokens and blob tickets for room members
+ok 10 - file endpoints issue CRDT tokens and blob tickets for room members
+  ---
+  duration_ms: 36.3807
+  ...
+# Subtest: authenticated blob content upload endpoint accepts raw octet-stream and returns detailed hash mismatch errors
+ok 11 - authenticated blob content upload endpoint accepts raw octet-stream and returns detailed hash mismatch errors
+  ---
+  duration_ms: 40.6954
+  ...
+# Subtest: blob uploads accept hex sha256 digests and normalize them to canonical storage keys
+ok 12 - blob uploads accept hex sha256 digests and normalize them to canonical storage keys
+  ---
+  duration_ms: 33.2532
+  ...
+# Subtest: blob upload sessions can be canceled before transfer begins
+ok 13 - blob upload sessions can be canceled before transfer begins
+  ---
+  duration_ms: 18.8555
+  ...
+# Subtest: realtime CRDT websocket sync persists markdown document state
+ok 14 - realtime CRDT websocket sync persists markdown document state
+  ---
+  duration_ms: 306.2125
+  ...
+# Subtest: markdown bootstrap endpoint returns current stored Yjs state for workspace markdown files
+not ok 15 - markdown bootstrap endpoint returns current stored Yjs state for workspace markdown files
+  ---
+  duration_ms: 50.7741
+  location: 'C:\\Users\\Roma\\.codex\\worktrees\\3b34\\server\\test\\app.test.ts:2:49051'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    400 !== 404
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 404
+  actual: 400
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\Roma\.codex\worktrees\3b34\server\test\app.test.ts:2138:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: excalidraw entries use blob persistence and reject markdown-only endpoints
+ok 16 - excalidraw entries use blob persistence and reject markdown-only endpoints
+  ---
+  duration_ms: 41.3643
+  ...
+# Subtest: excalidraw drawing live sync supports lease, control requests, pointer broadcast, and reconnect snapshot
+ok 17 - excalidraw drawing live sync supports lease, control requests, pointer broadcast, and reconnect snapshot
+  ---
+  duration_ms: 213.2358
+  ...
+# Subtest: excalidraw editor lease expires after missed heartbeat
+ok 18 - excalidraw editor lease expires after missed heartbeat
+  ---
+  duration_ms: 2231.753
+  ...

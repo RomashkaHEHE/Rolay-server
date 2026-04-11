@@ -12,6 +12,11 @@ export interface AppEnv {
   crdtProvider: string;
   crdtWsUrl: string;
   crdtTokenTtlSeconds: number;
+  drawingWsUrl: string;
+  drawingTokenTtlSeconds: number;
+  drawingLeaseTtlSeconds: number;
+  drawingSnapshotStoreDebounceMs: number;
+  drawingPointerStaleMs: number;
   blobTicketTtlSeconds: number;
   blobUploadBaseUrl: string;
   blobDownloadBaseUrl: string;
@@ -108,6 +113,17 @@ function deriveWsUrl(publicBaseUrl: string): string {
   throw new Error(`Cannot derive CRDT websocket URL from PUBLIC_BASE_URL: ${publicBaseUrl}`);
 }
 
+function deriveDrawingWsUrl(publicBaseUrl: string): string {
+  if (publicBaseUrl.startsWith("https://")) {
+    return `${publicBaseUrl.replace("https://", "wss://")}/v1/drawings`;
+  }
+  if (publicBaseUrl.startsWith("http://")) {
+    return `${publicBaseUrl.replace("http://", "ws://")}/v1/drawings`;
+  }
+
+  throw new Error(`Cannot derive drawing websocket URL from PUBLIC_BASE_URL: ${publicBaseUrl}`);
+}
+
 export function readEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const port = parsePort(source.PORT);
   const publicBaseUrl = normalizeBaseUrl(
@@ -147,6 +163,29 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
       source.CRDT_TOKEN_TTL_SECONDS,
       300,
       "CRDT_TOKEN_TTL_SECONDS"
+    ),
+    drawingWsUrl: normalizeBaseUrl(
+      source.DRAWING_WS_URL || deriveDrawingWsUrl(publicBaseUrl)
+    ),
+    drawingTokenTtlSeconds: parsePositiveInteger(
+      source.DRAWING_TOKEN_TTL_SECONDS,
+      300,
+      "DRAWING_TOKEN_TTL_SECONDS"
+    ),
+    drawingLeaseTtlSeconds: parsePositiveInteger(
+      source.DRAWING_LEASE_TTL_SECONDS,
+      30,
+      "DRAWING_LEASE_TTL_SECONDS"
+    ),
+    drawingSnapshotStoreDebounceMs: parsePositiveInteger(
+      source.DRAWING_SNAPSHOT_STORE_DEBOUNCE_MS,
+      1000,
+      "DRAWING_SNAPSHOT_STORE_DEBOUNCE_MS"
+    ),
+    drawingPointerStaleMs: parsePositiveInteger(
+      source.DRAWING_POINTER_STALE_MS,
+      5000,
+      "DRAWING_POINTER_STALE_MS"
     ),
     crdtStoreDebounceMs: parsePositiveInteger(
       source.CRDT_STORE_DEBOUNCE_MS,

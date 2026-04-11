@@ -55,7 +55,7 @@ export interface WorkspaceInvite {
   updatedAt: string;
 }
 
-export type FileKind = "folder" | "markdown" | "binary";
+export type FileKind = "folder" | "markdown" | "binary" | "excalidraw";
 export type ContentMode = "none" | "crdt" | "blob";
 
 export interface BlobRevision {
@@ -118,6 +118,7 @@ export interface OperationPreconditions {
 export type TreeOperationType =
   | "create_folder"
   | "create_markdown"
+  | "create_excalidraw"
   | "create_binary_placeholder"
   | "rename_entry"
   | "move_entry"
@@ -189,4 +190,51 @@ export interface BlobDownloadTicketRecord {
   userId: string;
   hash: string;
   expiresAt: string;
+}
+
+export interface DrawingParticipant {
+  userId: string;
+  deviceId: string;
+  username: string;
+  displayName: string;
+}
+
+export interface DrawingLease {
+  entryId: string;
+  workspaceId: string;
+  editor: DrawingParticipant;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
+export interface DrawingControlRequest {
+  requestId: string;
+  entryId: string;
+  workspaceId: string;
+  requestedBy: DrawingParticipant;
+  createdAt: string;
+}
+
+export interface DrawingScene {
+  elements: unknown[];
+  appState?: Record<string, unknown>;
+  files?: Record<string, unknown>;
+}
+
+export interface DrawingSceneSnapshot {
+  entryId: string;
+  workspaceId: string;
+  revision: number;
+  updatedAt: string;
+  scene: DrawingScene;
+}
+
+export interface DrawingPointerState {
+  entryId: string;
+  workspaceId: string;
+  editor: DrawingParticipant;
+  x: number;
+  y: number;
+  color?: string;
+  updatedAt: string;
 }

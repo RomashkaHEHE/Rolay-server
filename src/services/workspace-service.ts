@@ -398,6 +398,8 @@ export class WorkspaceService {
         return this.createEntry(workspace, operation, "folder", "none");
       case "create_markdown":
         return this.createEntry(workspace, operation, "markdown", "crdt");
+      case "create_excalidraw":
+        return this.createExcalidrawEntry(workspace, operation);
       case "create_binary_placeholder":
         return this.createEntry(workspace, operation, "binary", "blob");
       case "rename_entry":
@@ -480,6 +482,26 @@ export class WorkspaceService {
     };
   }
 
+  private createExcalidrawEntry(
+    workspace: StoredWorkspace,
+    operation: TreeOperation
+  ): OperationResult {
+    if (!operation.path) {
+      throw new AppError(400, "invalid_operation", "Create operation requires path.");
+    }
+
+    const path = normalizePath(operation.path);
+    if (!path.endsWith(".excalidraw.md")) {
+      return {
+        opId: operation.opId,
+        status: "rejected",
+        reason: "invalid_excalidraw_path"
+      };
+    }
+
+    return this.createEntry(workspace, operation, "excalidraw", "blob");
+  }
+
   private moveEntry(workspace: StoredWorkspace, operation: TreeOperation): OperationResult {
     if (!operation.entryId || !operation.newPath) {
       throw new AppError(
@@ -514,6 +536,13 @@ export class WorkspaceService {
         opId: operation.opId,
         status: "applied",
         entry: cloneValue(entry)
+      };
+    }
+    if (entry.kind === "excalidraw" && !newPath.endsWith(".excalidraw.md")) {
+      return {
+        opId: operation.opId,
+        status: "rejected",
+        reason: "invalid_excalidraw_path"
       };
     }
     if (entry.kind === "folder" && newPath.startsWith(`${entry.path}/`)) {
@@ -714,7 +743,7 @@ export class WorkspaceService {
         reason: "entry_not_found"
       };
     }
-    if (entry.kind !== "binary" || entry.deleted) {
+    if ((entry.kind !== "binary" && entry.kind !== "excalidraw") || entry.deleted) {
       return {
         opId: operation.opId,
         status: "rejected",

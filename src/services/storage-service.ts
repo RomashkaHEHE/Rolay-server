@@ -15,7 +15,7 @@ import {
   sha256HashFromPayload,
   trySha256HashDigestTokens
 } from "../core/hashes";
-import { BlobObject } from "../domain/types";
+import { BlobObject, DrawingSceneSnapshot } from "../domain/types";
 
 interface StoredBlobMetadata {
   hash: string;
@@ -28,6 +28,8 @@ interface StorageBackend {
   ensureReady(): Promise<void>;
   loadDocument(docId: string): Promise<Uint8Array | null>;
   storeDocument(docId: string, state: Uint8Array): Promise<void>;
+  loadDrawingSnapshot(entryId: string): Promise<DrawingSceneSnapshot | null>;
+  storeDrawingSnapshot(entryId: string, snapshot: DrawingSceneSnapshot): Promise<void>;
   hasBlob(hash: string): Promise<boolean>;
   storeBlob(hash: string, payload: Buffer, mimeType: string): Promise<BlobObject>;
   storeBlobFromFile(
@@ -142,12 +144,14 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
 class LocalStorageBackend implements StorageBackend {
   private readonly rootDir: string;
   private readonly documentsDir: string;
+  private readonly drawingsDir: string;
   private readonly blobsDir: string;
   private readyPromise: Promise<void> | undefined;
 
   constructor(env: AppEnv) {
     this.rootDir = path.resolve(env.localDataDir);
     this.documentsDir = path.join(this.rootDir, "documents");
+    this.drawingsDir = path.join(this.rootDir, "drawings");
     this.blobsDir = path.join(this.rootDir, "blobs");
   }
 
@@ -155,6 +159,7 @@ class LocalStorageBackend implements StorageBackend {
     if (!this.readyPromise) {
       this.readyPromise = Promise.all([
         fs.mkdir(this.documentsDir, { recursive: true }),
+        fs.mkdir(this.drawingsDir, { recursive: true }),
         fs.mkdir(this.blobsDir, { recursive: true })
       ]).then(() => undefined);
     }
@@ -178,6 +183,25 @@ class LocalStorageBackend implements StorageBackend {
   async storeDocument(docId: string, state: Uint8Array): Promise<void> {
     await this.ensureReady();
     await fs.writeFile(this.documentPath(docId), state);
+  }
+
+  async loadDrawingSnapshot(entryId: string): Promise<DrawingSceneSnapshot | null> {
+    await this.ensureReady();
+
+    try {
+      const snapshotRaw = await fs.readFile(this.drawingSnapshotPath(entryId), "utf8");
+      return JSON.parse(snapshotRaw) as DrawingSceneSnapshot;
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async storeDrawingSnapshot(entryId: string, snapshot: DrawingSceneSnapshot): Promise<void> {
+    await this.ensureReady();
+    await fs.writeFile(this.drawingSnapshotPath(entryId), JSON.stringify(snapshot, null, 2));
   }
 
   async hasBlob(hash: string): Promise<boolean> {
@@ -276,6 +300,10 @@ class LocalStorageBackend implements StorageBackend {
     return path.join(this.documentsDir, `${docId}.bin`);
   }
 
+  private drawingSnapshotPath(entryId: string): string {
+    return path.join(this.drawingsDir, `${entryId}.json`);
+  }
+
   private blobBinaryPath(hash: string): string {
     return this.blobBinaryPathFromDigest(hashDigest(hash));
   }
@@ -341,6 +369,30 @@ class MinioStorageBackend implements StorageBackend {
       payload.byteLength,
       {
         "Content-Type": "application/octet-stream"
+      }
+    );
+  }
+
+  async loadDrawingSnapshot(entryId: string): Promise<DrawingSceneSnapshot | null> {
+    await this.ensureReady();
+    const snapshotBuffer = await this.getObjectBuffer(this.drawingSnapshotObjectName(entryId));
+    if (!snapshotBuffer) {
+      return null;
+    }
+
+    return JSON.parse(snapshotBuffer.toString("utf8")) as DrawingSceneSnapshot;
+  }
+
+  async storeDrawingSnapshot(entryId: string, snapshot: DrawingSceneSnapshot): Promise<void> {
+    await this.ensureReady();
+    const payload = Buffer.from(JSON.stringify(snapshot, null, 2));
+    await this.client.putObject(
+      this.bucket,
+      this.drawingSnapshotObjectName(entryId),
+      payload,
+      payload.byteLength,
+      {
+        "Content-Type": "application/json"
       }
     );
   }
@@ -507,6 +559,10 @@ class MinioStorageBackend implements StorageBackend {
     return this.objectName("documents", `${docId}.bin`);
   }
 
+  private drawingSnapshotObjectName(entryId: string): string {
+    return this.objectName("drawings", `${entryId}.json`);
+  }
+
   private blobBinaryObjectName(hash: string): string {
     return this.blobBinaryObjectNameFromDigest(hashDigest(hash));
   }
@@ -560,6 +616,14 @@ export class StorageService {
 
   async storeDocument(docId: string, state: Uint8Array): Promise<void> {
     await this.backend.storeDocument(docId, state);
+  }
+
+  async loadDrawingSnapshot(entryId: string): Promise<DrawingSceneSnapshot | null> {
+    return this.backend.loadDrawingSnapshot(entryId);
+  }
+
+  async storeDrawingSnapshot(entryId: string, snapshot: DrawingSceneSnapshot): Promise<void> {
+    await this.backend.storeDrawingSnapshot(entryId, snapshot);
   }
 
   async hasBlob(hash: string): Promise<boolean> {

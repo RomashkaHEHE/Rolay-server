@@ -100,8 +100,18 @@ export class FileService {
 
   async createCrdtToken(actor: User, entryId: string): Promise<CrdtTokenResponse> {
     const context = this.requireEntryAccess(actor.id, entryId);
-    if (context.entry.deleted || context.entry.kind !== "markdown" || !context.entry.docId) {
+    if (context.entry.deleted) {
       throw new AppError(404, "entry_not_found", "Markdown entry not found.");
+    }
+    if (context.entry.kind !== "markdown" || !context.entry.docId) {
+      throw new AppError(
+        400,
+        "unsupported_entry_kind",
+        "Only markdown entries can create CRDT sessions.",
+        {
+          entryKind: context.entry.kind
+        }
+      );
     }
 
     const record: CrdtTokenRecord = {
@@ -174,7 +184,7 @@ export class FileService {
     mimeType: string
   ): Promise<BlobUploadResponse> {
     const context = this.requireEntryAccess(actor.id, entryId);
-    this.assertBinaryEntry(context.entry);
+    this.assertBlobBackedEntry(context.entry);
     const normalizedHash = this.normalizeSha256Hash(hash);
 
     if (
@@ -232,7 +242,7 @@ export class FileService {
     uploadId: string
   ): Promise<CancelBlobUploadResponse> {
     const context = this.requireEntryAccess(actor.id, entryId);
-    this.assertBinaryEntry(context.entry);
+    this.assertBlobBackedEntry(context.entry);
 
     const ticket = this.state.blobUploadTickets.get(uploadId);
     if (!ticket || ticket.entryId !== context.entry.id) {
@@ -259,9 +269,9 @@ export class FileService {
     entryId: string
   ): Promise<BlobDownloadResponse> {
     const context = this.requireEntryAccess(actor.id, entryId);
-    this.assertBinaryEntry(context.entry);
+    this.assertBlobBackedEntry(context.entry);
     if (!context.entry.blob) {
-      throw new AppError(404, "entry_not_found", "Binary blob revision not found.");
+      throw new AppError(404, "entry_not_found", "Blob revision not found.");
     }
 
     const ticket: BlobDownloadTicketRecord = {
@@ -291,7 +301,7 @@ export class FileService {
     requestContentType?: string
   ): Promise<BlobUploadContentResponse> {
     const context = this.requireEntryAccess(actor.id, entryId);
-    this.assertBinaryEntry(context.entry);
+    this.assertBlobBackedEntry(context.entry);
 
     const ticket = this.requireBlobUploadTicket(uploadId);
     if (ticket.entryId !== context.entry.id) {
@@ -373,8 +383,18 @@ export class FileService {
       seen.add(entryId);
 
       const entry = workspace.entries.get(entryId);
-      if (!entry || entry.deleted || entry.kind !== "markdown" || !entry.docId) {
+      if (!entry || entry.deleted) {
         throw new AppError(404, "entry_not_found", "Markdown entry not found.");
+      }
+      if (entry.kind !== "markdown" || !entry.docId) {
+        throw new AppError(
+          400,
+          "unsupported_entry_kind",
+          "Only markdown entries can use markdown bootstrap.",
+          {
+            entryKind: entry.kind
+          }
+        );
       }
 
       resolved.push(entry);
@@ -383,9 +403,9 @@ export class FileService {
     return resolved;
   }
 
-  private assertBinaryEntry(entry: FileEntry): void {
-    if (entry.deleted || entry.kind !== "binary") {
-      throw new AppError(404, "entry_not_found", "Binary entry not found.");
+  private assertBlobBackedEntry(entry: FileEntry): void {
+    if (entry.deleted || (entry.kind !== "binary" && entry.kind !== "excalidraw")) {
+      throw new AppError(404, "entry_not_found", "Blob-backed entry not found.");
     }
   }
 

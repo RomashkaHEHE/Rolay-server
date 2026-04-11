@@ -20,7 +20,7 @@ The current server optimizes for:
 
 ## High-Level Model
 
-The server has three different synchronization layers:
+The server has four different synchronization layers:
 
 1. Room and user management
    - authentication
@@ -37,6 +37,12 @@ The server has three different synchronization layers:
 3. File content sync
    - Markdown: realtime `Yjs` / `Hocuspocus`
    - non-Markdown files: blob-based whole-file sync
+
+4. Excalidraw live sessions
+   - single current editor per drawing
+   - live scene snapshot broadcast to viewers
+   - editor pointer presence
+   - persistent `.excalidraw.md` file remains blob-backed storage/fallback
 
 These layers are intentionally separate. Only Markdown content uses CRDT.
 
@@ -68,7 +74,7 @@ Behavior:
 
 ## Primary Transport Layers
 
-The server uses four transports:
+The server uses five transports:
 
 1. REST JSON
    - auth
@@ -90,6 +96,10 @@ The server uses four transports:
 4. CRDT WebSocket
    - `/v1/crdt`
    - used only for live Markdown collaboration
+
+5. Drawing WebSocket
+   - `/v1/drawings`
+   - used only for live Excalidraw single-editor sessions
 
 ## File Sync Design
 
@@ -124,6 +134,25 @@ Flow:
 - only after `commit_blob_revision` does the new file version become visible to everyone else
 
 This keeps binary sync simple and avoids pretending that non-text files are CRDT-safe.
+
+### Excalidraw drawings
+
+Excalidraw entries have:
+
+- `kind = "excalidraw"`
+- `contentMode = "blob"`
+- optional persistent `blob` revision for the serialized `.excalidraw.md` file
+
+Live drawing collaboration is intentionally not multi-writer. The server keeps:
+
+- one active editor lease per drawing
+- at most one pending control request
+- the latest accepted full scene snapshot
+- the latest fresh editor pointer
+
+Persistent file sync for the serialized drawing still uses the normal blob flow. Live scene state is
+stored separately for reconnect/viewer hydration and does not parse or merge the `.excalidraw.md`
+file on the server.
 
 ## Why the Tree Is Server-Authoritative
 

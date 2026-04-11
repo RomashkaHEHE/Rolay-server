@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: Rolay Server API
-  version: 0.2.0
+  version: 0.3.0
   description: >
     HTTP contract for Rolay v1. The product model is room-based:
     users have global roles, rooms have owner/member roles, and room trees
-    sync through snapshot + SSE + CRDT document sessions.
+    sync through snapshot + SSE + CRDT document sessions. Excalidraw drawings
+    use blob-backed persistence plus single-editor live sessions.
 servers:
   - url: https://rolay.example.com
     description: Production
@@ -18,6 +19,7 @@ tags:
   - name: rooms
   - name: tree
   - name: files
+  - name: drawings
 paths:
   /v1/auth/login:
     post:
@@ -721,10 +723,32 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
+  /v1/files/{entryId}/drawing-token:
+    post:
+      tags: [files, drawings]
+      summary: Create short-lived drawing token for Excalidraw live session
+      operationId: createDrawingToken
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+      responses:
+        '200':
+          description: Drawing session bootstrap
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrawingTokenResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
   /v1/files/{entryId}/blob/upload-ticket:
     post:
       tags: [files]
-      summary: Create upload ticket for binary file revision
+      summary: Create upload ticket for blob-backed file revision
       operationId: createBlobUploadTicket
       security:
         - bearerAuth: []
@@ -752,7 +776,7 @@ paths:
   /v1/files/{entryId}/blob/download-ticket:
     post:
       tags: [files]
-      summary: Create download ticket for current binary file revision
+      summary: Create download ticket for current blob-backed file revision
       operationId: createBlobDownloadTicket
       security:
         - bearerAuth: []
@@ -834,6 +858,122 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
+  /v1/drawings/{entryId}/lease/acquire:
+    post:
+      tags: [drawings]
+      summary: Acquire the active editor lease for an Excalidraw drawing
+      operationId: acquireDrawingLease
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+      responses:
+        '200':
+          description: Active editor lease
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrawingLeaseResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+  /v1/drawings/{entryId}/lease/release:
+    post:
+      tags: [drawings]
+      summary: Release the active editor lease for an Excalidraw drawing
+      operationId: releaseDrawingLease
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+      responses:
+        '200':
+          description: Lease released
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrawingLeaseResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/drawings/{entryId}/control-requests:
+    post:
+      tags: [drawings]
+      summary: Request control of an actively edited Excalidraw drawing
+      operationId: requestDrawingControl
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+      responses:
+        '201':
+          description: Control request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrawingControlRequestResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+  /v1/drawings/{entryId}/control-requests/{requestId}/approve:
+    post:
+      tags: [drawings]
+      summary: Approve and transfer drawing edit control to the requester
+      operationId: approveDrawingControlRequest
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Control request approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrawingControlResolutionResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/drawings/{entryId}/control-requests/{requestId}/deny:
+    post:
+      tags: [drawings]
+      summary: Deny a pending drawing control request
+      operationId: denyDrawingControlRequest
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Control request denied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrawingControlResolutionResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
   components:
   securitySchemes:
     bearerAuth:
@@ -862,6 +1002,13 @@ paths:
       schema:
         type: string
       description: Stable file entry identifier.
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Drawing control request identifier.
   responses:
     ErrorUnauthorized:
       description: Unauthorized
@@ -1248,7 +1395,7 @@ paths:
           type: string
         kind:
           type: string
-          enum: [folder, markdown, binary]
+          enum: [folder, markdown, binary, excalidraw]
         contentMode:
           type: string
           enum: [none, crdt, blob]
@@ -1302,6 +1449,7 @@ paths:
           enum:
             - create_folder
             - create_markdown
+            - create_excalidraw
             - create_binary_placeholder
             - rename_entry
             - move_entry
@@ -1382,6 +1530,183 @@ paths:
         expiresAt:
           type: string
           format: date-time
+    DrawingParticipant:
+      type: object
+      additionalProperties: false
+      required: [userId, deviceId, username, displayName]
+      properties:
+        userId:
+          type: string
+        deviceId:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+    DrawingLease:
+      type: object
+      additionalProperties: false
+      required: [entryId, workspaceId, editor, acquiredAt, expiresAt]
+      properties:
+        entryId:
+          type: string
+        workspaceId:
+          type: string
+        editor:
+          $ref: '#/components/schemas/DrawingParticipant'
+        acquiredAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+    DrawingControlRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, entryId, workspaceId, requestedBy, createdAt]
+      properties:
+        requestId:
+          type: string
+        entryId:
+          type: string
+        workspaceId:
+          type: string
+        requestedBy:
+          $ref: '#/components/schemas/DrawingParticipant'
+        createdAt:
+          type: string
+          format: date-time
+    DrawingScene:
+      type: object
+      additionalProperties: false
+      required: [elements]
+      properties:
+        elements:
+          type: array
+          items: {}
+        appState:
+          type: object
+          additionalProperties: true
+        files:
+          type: object
+          additionalProperties: true
+    DrawingSceneSnapshot:
+      type: object
+      additionalProperties: false
+      required: [entryId, workspaceId, revision, updatedAt, scene]
+      properties:
+        entryId:
+          type: string
+        workspaceId:
+          type: string
+        revision:
+          type: integer
+          minimum: 0
+        updatedAt:
+          type: string
+          format: date-time
+        scene:
+          $ref: '#/components/schemas/DrawingScene'
+    DrawingPointerState:
+      type: object
+      additionalProperties: false
+      required: [entryId, workspaceId, editor, x, y, updatedAt]
+      properties:
+        entryId:
+          type: string
+        workspaceId:
+          type: string
+        editor:
+          $ref: '#/components/schemas/DrawingParticipant'
+        x:
+          type: number
+        y:
+          type: number
+        color:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+    DrawingStateSummary:
+      type: object
+      additionalProperties: false
+      required: [lease, pendingControlRequest, latestScene, pointerActive]
+      properties:
+        lease:
+          oneOf:
+            - $ref: '#/components/schemas/DrawingLease'
+            - type: 'null'
+        pendingControlRequest:
+          oneOf:
+            - $ref: '#/components/schemas/DrawingControlRequest'
+            - type: 'null'
+        latestScene:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [revision, updatedAt]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 0
+                updatedAt:
+                  type: string
+                  format: date-time
+            - type: 'null'
+        pointerActive:
+          type: boolean
+    DrawingTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [entryId, workspaceId, provider, wsUrl, token, expiresAt, state]
+      properties:
+        entryId:
+          type: string
+        workspaceId:
+          type: string
+        provider:
+          type: string
+          example: rolay-excalidraw-live
+        wsUrl:
+          type: string
+          format: uri
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        state:
+          $ref: '#/components/schemas/DrawingStateSummary'
+    DrawingLeaseResponse:
+      type: object
+      additionalProperties: false
+      required: [lease]
+      properties:
+        lease:
+          oneOf:
+            - $ref: '#/components/schemas/DrawingLease'
+            - type: 'null'
+    DrawingControlRequestResponse:
+      type: object
+      additionalProperties: false
+      required: [request]
+      properties:
+        request:
+          $ref: '#/components/schemas/DrawingControlRequest'
+    DrawingControlResolutionResponse:
+      type: object
+      additionalProperties: false
+      required: [requestId, status, lease]
+      properties:
+        requestId:
+          type: string
+        status:
+          type: string
+          enum: [approved, denied, canceled]
+        lease:
+          oneOf:
+            - $ref: '#/components/schemas/DrawingLease'
+            - type: 'null'
     MarkdownBootstrapRequest:
       type: object
       additionalProperties: false
