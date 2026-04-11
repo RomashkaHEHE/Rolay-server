@@ -407,6 +407,7 @@ export class AuthService {
         userId
       });
       this.settingsEvents.publishRoomUpdated(workspaceId);
+      this.settingsEvents.publishRoomMembersUpdated(workspaceId);
       this.settingsEvents.publishAdminRoomMembersUpdated(workspaceId);
 
       if (workspace.memberships.size === 0) {
@@ -431,6 +432,7 @@ export class AuthService {
             promotedMember.userId,
             promotedMember.role
           );
+          this.settingsEvents.publishRoomMembersUpdated(workspaceId);
         }
       }
     }

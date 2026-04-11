@@ -215,6 +215,7 @@ Typical events:
 - `room.created`
 - `room.updated`
 - `room.deleted`
+- `room.members.updated`
 - `room.membership.changed`
 - `room.invite.updated`
 - `admin.user.created`

@@ -29,6 +29,20 @@ const workspacesRoutes: FastifyPluginAsync = async (app) => {
   app.get("/v1/workspaces", listWorkspaces);
   app.get("/v1/rooms", listWorkspaces);
 
+  const getWorkspaceMembers = async (request: FastifyRequest) => {
+    const principal = requireAuth(app, request);
+    const params = asObject(request.params, "Expected route params.");
+    return {
+      members: app.rolay.workspaces.getWorkspaceMembers(
+        principal.user,
+        requireString(params, "workspaceId")
+      )
+    };
+  };
+
+  app.get("/v1/workspaces/:workspaceId/members", getWorkspaceMembers);
+  app.get("/v1/rooms/:workspaceId/members", getWorkspaceMembers);
+
   app.post("/v1/workspaces", async (request, reply) => {
     return createWorkspace(request, reply);
   });

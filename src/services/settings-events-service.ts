@@ -293,6 +293,25 @@ export class SettingsEventsService {
     });
   }
 
+  publishRoomMembersUpdated(workspaceId: string): void {
+    const workspace = this.state.workspaces.get(workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    // Room members UI benefits from full snapshots here: the client can replace the visible list
+    // directly instead of replaying join/leave diffs and worrying about missed intermediate events.
+    this.publishEvent({
+      type: "room.members.updated",
+      scope: "room.members",
+      payload: {
+        workspaceId,
+        members: this.toRoomMembers(workspace)
+      },
+      targetUserIds: [...workspace.memberships.keys()]
+    });
+  }
+
   publishAdminRoomMembersUpdated(workspaceId: string): void {
     const workspace = this.state.workspaces.get(workspaceId);
     if (!workspace) {

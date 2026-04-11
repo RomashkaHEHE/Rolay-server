@@ -608,12 +608,28 @@ test("settings events are filtered for regular users and admins", async () => {
   const writerEvents = app.rolay.settingsEvents.listEventsSince(writerUser, initialCursor);
   const readerEvents = app.rolay.settingsEvents.listEventsSince(readerUser, initialCursor);
   const adminEvents = app.rolay.settingsEvents.listEventsSince(adminUser, initialCursor);
+  const writerMembersUpdated = writerEvents
+    .filter((event) => event.type === "room.members.updated" && event.scope === "room.members")
+    .at(-1);
+  const readerMembersUpdated = readerEvents
+    .filter((event) => event.type === "room.members.updated" && event.scope === "room.members")
+    .at(-1);
 
   assert.ok(writerEvents.some((event) => event.type === "room.created" && event.scope === "rooms"));
   assert.ok(
     writerEvents.some((event) => event.type === "auth.me.updated" && event.scope === "auth.me")
   );
   assert.ok(writerEvents.some((event) => event.type === "room.updated" && event.scope === "rooms"));
+  assert.ok(
+    writerEvents.some(
+      (event) => event.type === "room.members.updated" && event.scope === "room.members"
+    )
+  );
+  assert.equal(
+    Array.isArray(writerMembersUpdated?.payload.members) &&
+      writerMembersUpdated?.payload.members.length,
+    2
+  );
   assert.ok(writerEvents.every((event) => !event.type.startsWith("admin.user")));
 
   assert.ok(
@@ -622,6 +638,16 @@ test("settings events are filtered for regular users and admins", async () => {
     )
   );
   assert.ok(readerEvents.some((event) => event.type === "room.updated" && event.scope === "rooms"));
+  assert.ok(
+    readerEvents.some(
+      (event) => event.type === "room.members.updated" && event.scope === "room.members"
+    )
+  );
+  assert.equal(
+    Array.isArray(readerMembersUpdated?.payload.members) &&
+      readerMembersUpdated?.payload.members.length,
+    2
+  );
   assert.ok(readerEvents.every((event) => event.type !== "room.created"));
   assert.ok(readerEvents.every((event) => !event.type.startsWith("admin.")));
 
@@ -1016,6 +1042,112 @@ test("writer can create duplicate-named rooms, manage invite key, and members ca
   assert.equal(conflictResponse.statusCode, 409);
   assert.equal(conflictResponse.json().results[0].status, "conflict");
   assert.equal(conflictResponse.json().results[0].reason, "entry_version_mismatch");
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("room members endpoint is available to participants and rejects non-members", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader1",
+    password: "secret",
+    displayName: "Reader One",
+    globalRole: "reader"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader2",
+    password: "secret",
+    displayName: "Reader Two",
+    globalRole: "reader"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const readerSession = await loginAs(app, "reader1", "secret", "reader-laptop");
+  const outsiderSession = await loginAs(app, "reader2", "secret", "reader2-laptop");
+
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Members List Room"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const inviteResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(inviteResponse.statusCode, 200);
+
+  const joinResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${readerSession.accessToken}`
+    },
+    payload: {
+      code: inviteResponse.json().invite.code
+    }
+  });
+
+  assert.equal(joinResponse.statusCode, 200);
+
+  const memberListResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/members`,
+    headers: {
+      authorization: `Bearer ${readerSession.accessToken}`
+    }
+  });
+
+  assert.equal(memberListResponse.statusCode, 200);
+  assert.equal(memberListResponse.json().members.length, 2);
+  assert.equal(memberListResponse.json().members[0].role, "owner");
+  assert.equal(memberListResponse.json().members[1].role, "member");
+  assert.equal(memberListResponse.json().members[1].user.username, "reader1");
+
+  const legacyAliasResponse = await app.inject({
+    method: "GET",
+    url: `/v1/workspaces/${roomId}/members`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(legacyAliasResponse.statusCode, 200);
+  assert.equal(legacyAliasResponse.json().members.length, 2);
+
+  const outsiderResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/members`,
+    headers: {
+      authorization: `Bearer ${outsiderSession.accessToken}`
+    }
+  });
+
+  assert.equal(outsiderResponse.statusCode, 403);
 
   await app.close();
   await cleanupTestEnv(env);

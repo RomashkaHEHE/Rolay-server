@@ -8,7 +8,11 @@ room tree sync, and blob-based attachment storage.
 - live auth endpoints: `POST /v1/auth/login`, `POST /v1/auth/refresh`
 - live auth endpoints: `GET /v1/auth/me`, `PATCH /v1/auth/me/profile`, `PATCH /v1/auth/me/password`
 - live settings/admin stream: `GET /v1/events/settings` (SSE with cursor resume)
-- live room endpoints: `GET /v1/rooms`, `POST /v1/rooms`, `POST /v1/rooms/join`
+- live room endpoints:
+  `GET /v1/rooms`,
+  `POST /v1/rooms`,
+  `GET /v1/rooms/:workspaceId/members`,
+  `POST /v1/rooms/join`
 - live room invite endpoints:
   `GET /v1/rooms/:workspaceId/invite`,
   `PATCH /v1/rooms/:workspaceId/invite`,

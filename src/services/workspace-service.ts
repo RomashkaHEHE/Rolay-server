@@ -134,6 +134,7 @@ export class WorkspaceService {
     this.state.workspaces.set(workspace.id, record);
     await this.stateStore.saveState(this.state);
     this.settingsEvents.publishRoomCreated(workspace.id);
+    this.settingsEvents.publishRoomMembersUpdated(workspace.id);
     this.settingsEvents.publishAdminRoomMembersUpdated(workspace.id);
     return cloneValue(workspace);
   }
@@ -237,6 +238,7 @@ export class WorkspaceService {
         actor.id,
         membership.role
       );
+      this.settingsEvents.publishRoomMembersUpdated(workspace.workspace.id);
       this.settingsEvents.publishRoomUpdated(workspace.workspace.id);
       this.settingsEvents.publishAdminRoomMembersUpdated(workspace.workspace.id);
     }
@@ -273,6 +275,7 @@ export class WorkspaceService {
         });
         await this.stateStore.saveState(this.state);
         this.settingsEvents.publishRoomMembershipChanged(workspaceId, user.id, role);
+        this.settingsEvents.publishRoomMembersUpdated(workspaceId);
         this.settingsEvents.publishAdminRoomMembersUpdated(workspaceId);
       }
 
@@ -295,6 +298,7 @@ export class WorkspaceService {
     });
     await this.stateStore.saveState(this.state);
     this.settingsEvents.publishRoomMembershipChanged(workspaceId, user.id, role);
+    this.settingsEvents.publishRoomMembersUpdated(workspaceId);
     this.settingsEvents.publishRoomUpdated(workspaceId);
     this.settingsEvents.publishAdminRoomMembersUpdated(workspaceId);
 

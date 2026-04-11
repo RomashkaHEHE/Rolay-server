@@ -92,6 +92,7 @@ export type SettingsEventScope =
   | "settings.stream"
   | "auth.me"
   | "rooms"
+  | "room.members"
   | "room.invite"
   | "admin.users"
   | "admin.rooms"

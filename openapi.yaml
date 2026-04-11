@@ -349,6 +349,28 @@ paths:
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbidden'
+  /v1/rooms/{workspaceId}/members:
+    get:
+      tags: [rooms]
+      summary: List room members for the current participant
+      operationId: listRoomMembers
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Room members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomMemberListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
   /v1/workspaces:
     get:
       tags: [rooms]
@@ -388,6 +410,28 @@ paths:
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbidden'
+  /v1/workspaces/{workspaceId}/members:
+    get:
+      tags: [rooms]
+      summary: List room members for the current participant (workspace alias)
+      operationId: listWorkspaceMembers
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Room members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomMemberListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
   /v1/rooms/join:
     post:
       tags: [rooms]
@@ -961,6 +1005,7 @@ paths:
             - room.created
             - room.updated
             - room.deleted
+            - room.members.updated
             - room.membership.changed
             - room.invite.updated
             - admin.user.created
@@ -976,6 +1021,7 @@ paths:
             - settings.stream
             - auth.me
             - rooms
+            - room.members
             - room.invite
             - admin.users
             - admin.rooms

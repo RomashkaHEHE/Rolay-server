@@ -98,6 +98,16 @@ Not allowed for:
 
 - `POST /v1/rooms/join`
 
+### List members of a room
+
+- `GET /v1/rooms/{workspaceId}/members`
+
+Rules:
+
+- available to any current room participant
+- response shape matches the admin room members endpoint
+- non-members receive the normal workspace access error policy
+
 ### Invite management
 
 - `GET /v1/rooms/{workspaceId}/invite`
@@ -157,6 +167,7 @@ Event families:
 - `room.created`
 - `room.updated`
 - `room.deleted`
+- `room.members.updated`
 - `room.membership.changed`
 - `room.invite.updated`
 - `admin.user.created`
@@ -166,6 +177,9 @@ Event families:
 - `ping`
 
 The settings stream is separate from room tree SSE.
+
+`room.members.updated` carries a full current room member snapshot and is emitted only to current
+participants of that room. Admin dashboards still receive `admin.room.members.updated`.
 
 ## Tree Snapshot And Tree Events
 

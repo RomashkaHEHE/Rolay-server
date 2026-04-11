@@ -79,6 +79,7 @@ Each route module is intentionally thin. If you need actual behavior, jump from 
 - `src/modules/workspaces/workspaces.routes.ts`
   - room list
   - room creation
+  - participant room members list
   - both `/v1/workspaces` and `/v1/rooms` aliases
 
 - `src/modules/invites/invites.routes.ts`
