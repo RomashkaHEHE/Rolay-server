@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 const SHA256_PREFIX = "sha256:";
-const HEX_DIGEST_LENGTH = 64;
 const SHA256_BYTES = 32;
 
 function padBase64(value: string): string {
@@ -29,6 +28,8 @@ function stripSha256Prefix(hash: string): string {
 export function parseSha256HashBytes(hash: string): Buffer {
   const digest = stripSha256Prefix(hash);
 
+  // Accept both canonical base64 and user-supplied hex digests so desktop clients do not need to
+  // perfectly coordinate encoding details with the server before upload starts.
   if (/^[0-9a-fA-F]{64}$/.test(digest)) {
     return Buffer.from(digest, "hex");
   }
@@ -67,6 +68,9 @@ export function sha256HashDigestToken(hash: string): string {
 export function trySha256HashDigestTokens(hash: string): string[] {
   const digests = new Set<string>();
 
+  // Older persisted blob objects may already be keyed by whatever digest text the client sent
+  // before the server started canonicalizing hashes. Keep those lookup candidates alive so new
+  // code can still read previously stored payloads without migration.
   const legacyToken = hash.replace(/^sha256:/, "").replace(/[^A-Za-z0-9_-]/g, "_");
   if (legacyToken.length > 0) {
     digests.add(legacyToken);

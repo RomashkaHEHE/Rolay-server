@@ -7,14 +7,15 @@ It tells you where to look first for each feature.
 
 Recommended reading order:
 
-1. `README.md`
-2. `docs/architecture.md`
-3. `docs/protocol.md`
-4. `openapi.yaml`
-5. `src/app.ts`
-6. route modules in `src/modules`
-7. service modules in `src/services`
-8. `test/app.test.ts`
+1. `AGENT_ENTRYPOINT.md`
+2. `README.md`
+3. `docs/architecture.md`
+4. `docs/protocol.md`
+5. `openapi.yaml`
+6. `src/app.ts`
+7. route modules in `src/modules`
+8. service modules in `src/services`
+9. `test/app.test.ts`
 
 ## Top-Level Runtime Entry Points
 
@@ -43,6 +44,9 @@ Recommended reading order:
   - bearer auth extraction
 - `src/core/passwords.ts`
   - password hashing and verification
+- `src/core/hashes.ts`
+  - canonical SHA-256 parsing and normalization
+  - legacy blob-key compatibility helpers
 - `src/core/paths.ts`
   - path normalization and conflict path suggestions
 - `src/core/ids.ts`

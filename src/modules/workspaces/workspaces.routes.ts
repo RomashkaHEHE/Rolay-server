@@ -40,6 +40,8 @@ const workspacesRoutes: FastifyPluginAsync = async (app) => {
     };
   };
 
+  // Keep both route families live while the product vocabulary is "room" but older sync code and
+  // parts of the protocol still use "workspaceId" as the stable identifier.
   app.get("/v1/workspaces/:workspaceId/members", getWorkspaceMembers);
   app.get("/v1/rooms/:workspaceId/members", getWorkspaceMembers);
 

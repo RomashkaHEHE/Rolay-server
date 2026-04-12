@@ -54,6 +54,8 @@ function hashDigest(hash: string): string {
 }
 
 function hashDigestCandidates(hash: string): string[] {
+  // Storage lookups need both canonical and legacy key candidates because older payloads may have
+  // been persisted before server-side hash normalization was introduced.
   return trySha256HashDigestTokens(hash);
 }
 

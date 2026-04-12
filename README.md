@@ -3,6 +3,10 @@
 Backend for self-hosted Obsidian collaboration with realtime markdown editing,
 room tree sync, and blob-based attachment storage.
 
+New agent start here:
+
+- [AGENT_ENTRYPOINT.md](AGENT_ENTRYPOINT.md)
+
 ## Current status
 
 - live auth endpoints: `POST /v1/auth/login`, `POST /v1/auth/refresh`
@@ -93,6 +97,7 @@ Managed accounts:
 
 ## Repository docs
 
+- [AGENT_ENTRYPOINT.md](AGENT_ENTRYPOINT.md)
 - [docs/codebase-map.md](docs/codebase-map.md)
 - [docs/architecture.md](docs/architecture.md)
 - [docs/protocol.md](docs/protocol.md)

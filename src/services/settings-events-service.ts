@@ -301,6 +301,8 @@ export class SettingsEventsService {
 
     // Room members UI benefits from full snapshots here: the client can replace the visible list
     // directly instead of replaying join/leave diffs and worrying about missed intermediate events.
+    // This is intentionally separate from admin.room.members.updated because participant-facing UI
+    // and admin dashboards have different visibility rules and usually different stores.
     this.publishEvent({
       type: "room.members.updated",
       scope: "room.members",
