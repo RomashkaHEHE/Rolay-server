@@ -185,6 +185,28 @@ async function waitForSseEvent(
   throw new Error(`Timed out after ${timeoutMs}ms waiting for SSE event "${eventName}".`);
 }
 
+async function waitForSseEventMatching<T>(
+  stream: SseStream,
+  eventName: string,
+  predicate: (payload: T, message: SseMessage) => boolean,
+  timeoutMs = 2000
+): Promise<{ message: SseMessage; payload: T }> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const message = await waitForSseEvent(stream, eventName, timeoutMs);
+    const payload = message.data ? (JSON.parse(message.data) as T) : ({} as T);
+    if (predicate(payload, message)) {
+      return {
+        message,
+        payload
+      };
+    }
+  }
+
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for matching SSE event "${eventName}".`);
+}
+
 async function loginAs(
   app: AppInstance,
   username: string,
@@ -2012,6 +2034,273 @@ test("realtime CRDT websocket sync persists markdown document state", async () =
 
   providerA.destroy();
   providerB.destroy();
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("room note presence SSE reflects markdown awareness without requiring selection", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const writerUser = writerSession.user as { id: string; displayName: string };
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Presence Notes"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_note_presence_markdown",
+          type: "create_markdown",
+          path: "Week-03.md"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const markdownEntry = createEntryResponse.json().results[0].entry;
+
+  await app.listen({
+    host: "127.0.0.1",
+    port: 0
+  });
+
+  const address = app.server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const wsUrl = `ws://127.0.0.1:${address.port}/v1/crdt`;
+
+  const presenceStream = await openSseStream(
+    `${baseUrl}/v1/workspaces/${roomId}/note-presence/events`,
+    writerSession.accessToken
+  );
+  const snapshotMessage = await waitForSseEvent(presenceStream, "presence.snapshot");
+  assert.ok(snapshotMessage.data);
+  assert.deepEqual(JSON.parse(snapshotMessage.data), {
+    workspaceId: roomId,
+    notes: []
+  });
+
+  const crdtTokenResponseA = await app.inject({
+    method: "POST",
+    url: `/v1/files/${markdownEntry.id}/crdt-token`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(crdtTokenResponseA.statusCode, 200);
+
+  const crdtTokenResponseB = await app.inject({
+    method: "POST",
+    url: `/v1/files/${markdownEntry.id}/crdt-token`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(crdtTokenResponseB.statusCode, 200);
+
+  (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
+
+  const firstDoc = new Y.Doc();
+  const secondDoc = new Y.Doc();
+  let firstSynced = false;
+  let secondSynced = false;
+
+  const providerA = new HocuspocusProvider({
+    url: wsUrl,
+    name: markdownEntry.docId,
+    document: firstDoc,
+    token: crdtTokenResponseA.json().token,
+    onSynced: ({ state }) => {
+      if (state) {
+        firstSynced = true;
+      }
+    }
+  });
+
+  const providerB = new HocuspocusProvider({
+    url: wsUrl,
+    name: markdownEntry.docId,
+    document: secondDoc,
+    token: crdtTokenResponseB.json().token,
+    onSynced: ({ state }) => {
+      if (state) {
+        secondSynced = true;
+      }
+    }
+  });
+
+  await waitFor(() => firstSynced && secondSynced);
+
+  providerA.setAwarenessField("user", {
+    userId: writerUser.id,
+    displayName: writerUser.displayName,
+    color: "#8b5cf6"
+  });
+  providerA.setAwarenessField("viewer", {
+    workspaceId: roomId,
+    entryId: markdownEntry.id,
+    active: true
+  });
+
+  const firstPresence = await waitForSseEventMatching<{
+    workspaceId: string;
+    entryId: string;
+    viewers: Array<{
+      presenceId: string;
+      userId: string;
+      displayName: string;
+      color: string | null;
+      hasSelection: boolean;
+    }>;
+  }>(
+    presenceStream,
+    "note.presence.updated",
+    (payload) => payload.entryId === markdownEntry.id && payload.viewers.length === 1
+  );
+
+  assert.equal(firstPresence.payload.workspaceId, roomId);
+  const [firstViewer] = firstPresence.payload.viewers;
+  assert.ok(firstViewer);
+  assert.equal(firstViewer.userId, writerUser.id);
+  assert.equal(firstViewer.displayName, writerUser.displayName);
+  assert.equal(firstViewer.color, "#8b5cf6");
+  assert.equal(firstViewer.hasSelection, false);
+  const firstPresenceId = firstViewer.presenceId;
+
+  providerB.setAwarenessField("user", {
+    userId: writerUser.id,
+    displayName: writerUser.displayName,
+    color: "#22c55e"
+  });
+  providerB.setAwarenessField("viewer", {
+    workspaceId: roomId,
+    entryId: markdownEntry.id,
+    active: true
+  });
+
+  const secondPresence = await waitForSseEventMatching<{
+    entryId: string;
+    viewers: Array<{
+      presenceId: string;
+      userId: string;
+      displayName: string;
+      color: string | null;
+      hasSelection: boolean;
+    }>;
+  }>(
+    presenceStream,
+    "note.presence.updated",
+    (payload) => payload.entryId === markdownEntry.id && payload.viewers.length === 2
+  );
+
+  assert.equal(secondPresence.payload.viewers.every((viewer) => viewer.userId === writerUser.id), true);
+  assert.equal(
+    new Set(secondPresence.payload.viewers.map((viewer) => viewer.presenceId)).size,
+    2
+  );
+  assert.ok(
+    secondPresence.payload.viewers.some((viewer) => viewer.presenceId === firstPresenceId)
+  );
+  assert.deepEqual(
+    [...new Set(secondPresence.payload.viewers.map((viewer) => viewer.color))].sort(),
+    ["#22c55e", "#8b5cf6"]
+  );
+  assert.equal(
+    secondPresence.payload.viewers.every((viewer) => viewer.hasSelection === false),
+    true
+  );
+
+  providerA.setAwarenessField("selection", {
+    anchor: 4,
+    head: 4
+  });
+
+  const selectedPresence = await waitForSseEventMatching<{
+    entryId: string;
+    viewers: Array<{
+      presenceId: string;
+      hasSelection: boolean;
+    }>;
+  }>(
+    presenceStream,
+    "note.presence.updated",
+    (payload) =>
+      payload.entryId === markdownEntry.id &&
+      payload.viewers.some(
+        (viewer) => viewer.presenceId === firstPresenceId && viewer.hasSelection === true
+      )
+  );
+
+  assert.ok(
+    selectedPresence.payload.viewers.some(
+      (viewer) => viewer.presenceId === firstPresenceId && viewer.hasSelection
+    )
+  );
+
+  providerA.destroy();
+
+  const afterFirstDisconnect = await waitForSseEventMatching<{
+    entryId: string;
+    viewers: Array<{
+      presenceId: string;
+    }>;
+  }>(
+    presenceStream,
+    "note.presence.updated",
+    (payload) =>
+      payload.entryId === markdownEntry.id &&
+      payload.viewers.length === 1 &&
+      payload.viewers.every((viewer) => viewer.presenceId !== firstPresenceId)
+  );
+
+  assert.equal(afterFirstDisconnect.payload.viewers.length, 1);
+
+  providerB.destroy();
+
+  const afterSecondDisconnect = await waitForSseEventMatching<{
+    entryId: string;
+    viewers: Array<unknown>;
+  }>(
+    presenceStream,
+    "note.presence.updated",
+    (payload) => payload.entryId === markdownEntry.id && payload.viewers.length === 0
+  );
+
+  assert.deepEqual(afterSecondDisconnect.payload.viewers, []);
+
+  await presenceStream.reader.cancel();
   await app.close();
   await cleanupTestEnv(env);
 });

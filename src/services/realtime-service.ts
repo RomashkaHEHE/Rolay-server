@@ -2,7 +2,11 @@ import type { Server as HttpServer, IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { URL } from "node:url";
 
-import { Hocuspocus } from "@hocuspocus/server";
+import {
+  Hocuspocus,
+  afterUnloadDocumentPayload,
+  onAwarenessUpdatePayload
+} from "@hocuspocus/server";
 import type { FastifyBaseLogger } from "fastify";
 import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
@@ -11,6 +15,7 @@ import * as Y from "yjs";
 import { AppEnv } from "../config/env";
 import { FileEntry, Membership } from "../domain/types";
 import { MemoryState, StoredWorkspace } from "./memory-state";
+import { NotePresenceService } from "./note-presence-service";
 import { StorageService } from "./storage-service";
 
 interface RealtimeContext {
@@ -40,6 +45,7 @@ export class RealtimeService {
   constructor(
     private readonly state: MemoryState,
     private readonly storage: StorageService,
+    private readonly notePresence: NotePresenceService,
     private readonly env: AppEnv,
     private readonly logger: FastifyBaseLogger
   ) {
@@ -52,8 +58,14 @@ export class RealtimeService {
       onLoadDocument: async (payload) => {
         return this.loadDocument(payload.documentName);
       },
+      onAwarenessUpdate: async (payload) => {
+        this.handleAwarenessUpdate(payload);
+      },
       onStoreDocument: async (payload) => {
         await this.storeDocument(payload.documentName, payload.document);
+      },
+      afterUnloadDocument: async (payload) => {
+        this.handleAfterUnloadDocument(payload);
       }
     });
   }
@@ -150,6 +162,24 @@ export class RealtimeService {
   private async storeDocument(documentName: string, document: Y.Doc): Promise<void> {
     const state = Y.encodeStateAsUpdate(document);
     await this.storage.storeDocument(documentName, state);
+  }
+
+  private handleAwarenessUpdate(payload: onAwarenessUpdatePayload): void {
+    const context = payload.context as RealtimeContext | undefined;
+    if (!context) {
+      return;
+    }
+
+    // Note presence intentionally stays separate from caret rendering: anyone with a live viewer
+    // state in the markdown document counts as present even if they haven't published a selection.
+    this.notePresence.reconcileAwareness(
+      context,
+      payload.states as Array<Record<string | number, unknown>>
+    );
+  }
+
+  private handleAfterUnloadDocument(payload: afterUnloadDocumentPayload): void {
+    this.notePresence.clearDocumentPresence(payload.documentName);
   }
 
   private findMarkdownAccess(

@@ -24,7 +24,7 @@ In practice:
 The protocol uses:
 
 - REST JSON for auth, room management, tree mutations, bootstrap, and blob tickets
-- SSE for room events and settings/admin events
+- SSE for room events, note presence, and settings/admin events
 - `Yjs` WebSocket for live Markdown collaboration
 
 ## Authentication
@@ -181,6 +181,80 @@ The settings stream is separate from room tree SSE.
 `room.members.updated` carries a full current room member snapshot and is emitted only to current
 participants of that room. Admin dashboards still receive `admin.room.members.updated`.
 
+## Note Presence SSE
+
+- `GET /v1/workspaces/{workspaceId}/note-presence/events`
+
+Purpose:
+
+- room-wide live presence for Markdown notes
+- explorer badges and note-level viewer chips
+- duplicate live viewers for the same user across multiple devices/windows
+
+Behavior:
+
+- any current room member can subscribe
+- every new stream starts with `presence.snapshot`
+- later updates arrive as `note.presence.updated`
+- `ping` keepalive is sent periodically
+- no durable resume cursor is used for this stream
+
+Presence rules:
+
+- source of truth is Markdown `Yjs` awareness
+- selection is optional
+- a viewer without a caret/selection still counts as present
+- presence is keyed by `workspaceId` + `entryId`
+- each live viewer gets its own `presenceId`
+- the same `userId` can appear multiple times
+
+Example snapshot payload:
+
+```json
+{
+  "workspaceId": "ws_1",
+  "notes": [
+    {
+      "entryId": "fil_123",
+      "viewers": [
+        {
+          "presenceId": "presence:ws_1:fil_123:9384702",
+          "userId": "usr_1",
+          "displayName": "Roma",
+          "color": "#8b5cf6",
+          "hasSelection": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+Example per-note update payload:
+
+```json
+{
+  "workspaceId": "ws_1",
+  "entryId": "fil_123",
+  "viewers": [
+    {
+      "presenceId": "presence:ws_1:fil_123:9384702",
+      "userId": "usr_1",
+      "displayName": "Roma",
+      "color": "#8b5cf6",
+      "hasSelection": true
+    },
+    {
+      "presenceId": "presence:ws_1:fil_123:9384703",
+      "userId": "usr_1",
+      "displayName": "Roma",
+      "color": "#22c55e",
+      "hasSelection": false
+    }
+  ]
+}
+```
+
 ## Tree Snapshot And Tree Events
 
 ### Snapshot
@@ -307,6 +381,8 @@ Client uses:
 - a normal `Yjs` / `Hocuspocus` compatible provider
 
 The server loads and stores `Yjs` documents from persistent storage.
+The same awareness channel also feeds room note presence aggregation, but note presence is exposed
+through its own SSE stream rather than piggybacking on tree events.
 
 ## Binary File Protocol
 

@@ -16,6 +16,7 @@ tags:
   - name: admin
   - name: settings
   - name: rooms
+  - name: presence
   - name: tree
   - name: files
 paths:
@@ -426,6 +427,59 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RoomMemberListResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/rooms/{workspaceId}/note-presence/events:
+    get:
+      tags: [presence]
+      summary: Subscribe to room note presence updates
+      operationId: streamRoomNotePresence
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Server-sent event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: presence.snapshot
+                  data: {"workspaceId":"ws_01","notes":[{"entryId":"fil_01","viewers":[{"presenceId":"presence:ws_01:fil_01:9384702","userId":"usr_01","displayName":"Roma","color":"#8b5cf6","hasSelection":false}]}]}
+                  
+                  event: note.presence.updated
+                  data: {"workspaceId":"ws_01","entryId":"fil_01","viewers":[{"presenceId":"presence:ws_01:fil_01:9384702","userId":"usr_01","displayName":"Roma","color":"#8b5cf6","hasSelection":true}]}
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/note-presence/events:
+    get:
+      tags: [presence]
+      summary: Subscribe to room note presence updates (workspace alias)
+      operationId: streamWorkspaceNotePresence
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Server-sent event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: presence.snapshot
+                  data: {"workspaceId":"ws_01","notes":[]}
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
@@ -1230,6 +1284,58 @@ paths:
           type: array
           items:
             $ref: '#/components/schemas/RoomMember'
+    NotePresenceViewer:
+      type: object
+      additionalProperties: false
+      required: [presenceId, userId, displayName, color, hasSelection]
+      properties:
+        presenceId:
+          type: string
+        userId:
+          type: string
+        displayName:
+          type: string
+        color:
+          type:
+            - string
+            - 'null'
+        hasSelection:
+          type: boolean
+    NotePresenceNote:
+      type: object
+      additionalProperties: false
+      required: [entryId, viewers]
+      properties:
+        entryId:
+          type: string
+        viewers:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotePresenceViewer'
+    NotePresenceSnapshot:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, notes]
+      properties:
+        workspaceId:
+          type: string
+        notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotePresenceNote'
+    NotePresenceUpdate:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, entryId, viewers]
+      properties:
+        workspaceId:
+          type: string
+        entryId:
+          type: string
+        viewers:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotePresenceViewer'
     Membership:
       type: object
       additionalProperties: false

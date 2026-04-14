@@ -68,7 +68,7 @@ Behavior:
 
 ## Primary Transport Layers
 
-The server uses four transports:
+The server uses five transports:
 
 1. REST JSON
    - auth
@@ -87,7 +87,11 @@ The server uses four transports:
    - `GET /v1/events/settings`
    - used for profile, room list, admin list, invite, and membership updates
 
-4. CRDT WebSocket
+4. Note presence SSE
+   - `GET /v1/workspaces/{workspaceId}/note-presence/events`
+   - used for room-wide live note viewer state aggregated from Markdown awareness
+
+5. CRDT WebSocket
    - `/v1/crdt`
    - used only for live Markdown collaboration
 
@@ -106,6 +110,7 @@ Flow:
 - client requests `crdt-token`
 - client connects to `Hocuspocus`
 - server loads/stores the `Yjs` document from persistent storage
+- server also aggregates awareness into room-level note presence
 
 ### Non-Markdown files
 
@@ -175,7 +180,7 @@ Stored objects:
 
 ## Event Systems
 
-There are two separate SSE systems.
+There are three separate live stream systems.
 
 ### Room event stream
 
@@ -222,6 +227,27 @@ Typical events:
 - `admin.user.updated`
 - `admin.user.deleted`
 - `admin.room.members.updated`
+
+### Note presence stream
+
+Scope:
+
+- one room
+- live viewer state for Markdown notes only
+
+Implemented in:
+
+- `src/modules/note-presence/note-presence.routes.ts`
+- `src/services/note-presence-service.ts`
+- `src/services/realtime-service.ts`
+
+Behavior:
+
+- initial `presence.snapshot` on every new connection
+- live `note.presence.updated` events after awareness changes
+- no durable resume cursor
+- duplicate presence records for the same user are allowed across devices/windows
+- selection is optional; viewer-only awareness still counts as presence
 
 ## Large File Behavior
 

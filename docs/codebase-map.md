@@ -86,6 +86,10 @@ Each route module is intentionally thin. If you need actual behavior, jump from 
   - participant room members list
   - both `/v1/workspaces` and `/v1/rooms` aliases
 
+- `src/modules/note-presence/note-presence.routes.ts`
+  - room note-presence SSE stream
+  - initial snapshot plus live per-note presence updates
+
 - `src/modules/invites/invites.routes.ts`
   - join room by invite code
   - get/toggle/regenerate invite
@@ -137,6 +141,12 @@ Most business logic lives here.
   - `Hocuspocus` integration
   - Markdown-only websocket auth
   - load/store of Yjs document state
+  - awareness hook feeding note presence aggregation
+
+- `src/services/note-presence-service.ts`
+  - room-level live note presence aggregation
+  - viewer snapshot/update fanout
+  - duplicate-presence handling for multi-device users
 
 - `src/services/settings-events-service.ts`
   - settings/admin SSE event publication and visibility filtering
@@ -155,7 +165,7 @@ Most business logic lives here.
   - snapshot serialization/deserialization
   - listener registries
 
-## Two Different SSE Systems
+## Three Different Live Streams
 
 This matters a lot.
 
@@ -172,6 +182,14 @@ This matters a lot.
 - state source: `src/services/settings-events-service.ts`
 - scope: current user settings and admin screens
 - payloads: profile/room/admin snapshots
+
+### Note Presence SSE
+
+- implementation: `src/modules/note-presence/note-presence.routes.ts`
+- state source: `src/services/note-presence-service.ts`
+- upstream source of truth: Markdown awareness from `src/services/realtime-service.ts`
+- scope: one room
+- payloads: `presence.snapshot`, `note.presence.updated`
 
 Do not confuse them.
 
@@ -208,6 +226,7 @@ This file is long, but it is the best executable overview of what the server cur
 - blob upload/download
 - upload cancellation
 - CRDT websocket sync
+- note presence SSE
 - markdown bootstrap
 
 If you are unsure whether a behavior is intentional, search this file first.

@@ -44,10 +44,12 @@ If docs and code disagree, trust:
 
 This is legacy naming. It is normal in this repository.
 
-### Two SSE systems
+### Three room sync streams
 
 - `/v1/workspaces/{workspaceId}/events`
   - room-local tree and file events
+- `/v1/workspaces/{workspaceId}/note-presence/events`
+  - room-local live note presence aggregated from markdown awareness
 - `/v1/events/settings`
   - profile, room list, invite state, members list, admin UI
 
@@ -90,6 +92,10 @@ If you change:
   - `src/modules/invites/invites.routes.ts`
   - `src/services/workspace-service.ts`
   - `src/services/settings-events-service.ts`
+- note presence:
+  - `src/modules/note-presence/note-presence.routes.ts`
+  - `src/services/note-presence-service.ts`
+  - `src/services/realtime-service.ts`
 - tree sync:
   - `src/modules/tree/tree.routes.ts`
   - `src/services/workspace-service.ts`

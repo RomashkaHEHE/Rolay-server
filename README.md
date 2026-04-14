@@ -32,6 +32,9 @@ New agent start here:
 - live tree endpoints: `GET /v1/workspaces/:workspaceId/tree`
 - live tree endpoints: `POST /v1/workspaces/:workspaceId/ops/batch`
 - live event stream: `GET /v1/workspaces/:workspaceId/events` (SSE)
+- live note presence stream:
+  `GET /v1/workspaces/:workspaceId/note-presence/events`
+  (SSE snapshot + live note updates)
 - live markdown bootstrap: `POST /v1/workspaces/:workspaceId/markdown/bootstrap`
   (supports metadata-only mode via `includeState=false`)
 - live file endpoints: `POST /v1/files/:entryId/crdt-token`
@@ -48,6 +51,7 @@ New agent start here:
 - global user roles are `admin`, `writer`, `reader`
 - room membership roles are `owner`, `member`
 - realtime CRDT is used only for markdown content
+- room-level note presence is aggregated from markdown awareness and exposed through a separate SSE stream
 - room tree state is server-authoritative, not CRDT-based
 - binary files are synced as blob objects addressed by `sha256`
 - server accepts `sha256` digests in hex or base64 form and normalizes them to canonical base64 in API responses and persisted state

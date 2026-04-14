@@ -191,3 +191,27 @@ export interface BlobDownloadTicketRecord {
   hash: string;
   expiresAt: string;
 }
+
+export interface NotePresenceViewer {
+  presenceId: string;
+  userId: string;
+  displayName: string;
+  color: string | null;
+  hasSelection: boolean;
+}
+
+export interface NotePresenceNoteSnapshot {
+  entryId: string;
+  viewers: NotePresenceViewer[];
+}
+
+export interface NotePresenceSnapshot {
+  workspaceId: string;
+  notes: NotePresenceNoteSnapshot[];
+}
+
+export interface NotePresenceUpdate {
+  workspaceId: string;
+  entryId: string;
+  viewers: NotePresenceViewer[];
+}

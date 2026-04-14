@@ -13,6 +13,7 @@ import adminRoutes from "./modules/admin/admin.routes";
 import authRoutes from "./modules/auth/auth.routes";
 import filesRoutes from "./modules/files/files.routes";
 import invitesRoutes from "./modules/invites/invites.routes";
+import notePresenceRoutes from "./modules/note-presence/note-presence.routes";
 import rootRoutes from "./modules/root/root.routes";
 import settingsEventsRoutes from "./modules/settings-events/settings-events.routes";
 import storageRoutes from "./modules/storage/storage.routes";
@@ -60,7 +61,13 @@ export async function buildApp(
   });
 
   app.decorate("rolay", await createRolayContext(env));
-  const realtime = new RealtimeService(app.rolay.state, app.rolay.storage, env, app.log);
+  const realtime = new RealtimeService(
+    app.rolay.state,
+    app.rolay.storage,
+    app.rolay.notePresence,
+    env,
+    app.log
+  );
 
   app.addHook("onReady", async () => {
     await app.rolay.storage.ensureReady();
@@ -79,6 +86,7 @@ export async function buildApp(
   await app.register(invitesRoutes);
   await app.register(settingsEventsRoutes);
   await app.register(workspacesRoutes);
+  await app.register(notePresenceRoutes);
   await app.register(treeRoutes);
   await app.register(filesRoutes);
   await app.register(storageRoutes);
