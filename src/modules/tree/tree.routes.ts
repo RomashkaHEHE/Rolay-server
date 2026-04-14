@@ -1,5 +1,11 @@
 import { FastifyPluginAsync, FastifyReply } from "fastify";
 
+import {
+  attachTraceRequestId,
+  definedTraceFields,
+  logBlobTrace,
+  logBlobTraceFailure
+} from "../../core/blob-trace";
 import { AppError } from "../../core/errors";
 import { requireAuth } from "../../core/http-auth";
 import {
@@ -125,28 +131,81 @@ const treeRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/v1/workspaces/:workspaceId/ops/batch", async (request, reply) => {
-    const principal = requireAuth(app, request);
-    const params = asObject(request.params, "Expected route params.");
-    const body = asObject(request.body);
-    const operations = asArray(body.operations, 'Field "operations" must be an array.');
-    if (operations.length === 0) {
-      throw new AppError(400, "invalid_request", 'Field "operations" must not be empty.');
+    attachTraceRequestId(reply, request.id);
+
+    let workspaceId: string | undefined;
+    let commitOperations: TreeOperation[] = [];
+
+    try {
+      const principal = requireAuth(app, request);
+      const params = asObject(request.params, "Expected route params.");
+      const body = asObject(request.body);
+      const operations = asArray(body.operations, 'Field "operations" must be an array.');
+      if (operations.length === 0) {
+        throw new AppError(400, "invalid_request", 'Field "operations" must not be empty.');
+      }
+
+      workspaceId = requireString(params, "workspaceId");
+      const parsedOperations = operations.map((operation) => parseOperation(operation));
+      commitOperations = parsedOperations.filter(
+        (operation) => operation.type === "commit_blob_revision"
+      );
+
+      const results = await app.rolay.workspaces.applyOperations(
+        principal.user,
+        workspaceId,
+        requireString(body, "deviceId"),
+        parsedOperations
+      );
+
+      if (results.some((result) => result.status === "conflict")) {
+        reply.status(409);
+      }
+
+      const statusCode = reply.statusCode >= 400 ? reply.statusCode : 200;
+      for (const operation of commitOperations) {
+        const result = results.find((candidate) => candidate.opId === operation.opId);
+        logBlobTrace(request.log, {
+          phase: "commit-blob-revision",
+          route: "/v1/workspaces/:workspaceId/ops/batch",
+          requestId: request.id,
+          statusCode,
+          ...definedTraceFields({
+            workspaceId,
+            entryId: operation.entryId,
+            hash: operation.hash,
+            sizeBytes: operation.sizeBytes,
+            storedBlobHash: result?.entry?.blob?.hash,
+            operationStatus: result?.status,
+            opId: operation.opId
+          })
+        });
+      }
+
+      return {
+        results
+      };
+    } catch (error) {
+      for (const operation of commitOperations) {
+        logBlobTraceFailure(
+          request.log,
+          {
+            phase: "commit-blob-revision",
+            route: "/v1/workspaces/:workspaceId/ops/batch",
+            requestId: request.id,
+            ...definedTraceFields({
+              workspaceId,
+              entryId: operation.entryId,
+              hash: operation.hash,
+              sizeBytes: operation.sizeBytes,
+              opId: operation.opId
+            })
+          },
+          error
+        );
+      }
+      throw error;
     }
-
-    const results = await app.rolay.workspaces.applyOperations(
-      principal.user,
-      requireString(params, "workspaceId"),
-      requireString(body, "deviceId"),
-      operations.map((operation) => parseOperation(operation))
-    );
-
-    if (results.some((result) => result.status === "conflict")) {
-      reply.status(409);
-    }
-
-    return {
-      results
-    };
   });
 
   app.get("/v1/workspaces/:workspaceId/events", async (request, reply) => {

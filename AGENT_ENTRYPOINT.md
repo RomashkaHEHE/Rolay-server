@@ -63,7 +63,9 @@ Do not mix them.
   - optional bootstrap via `/v1/workspaces/{workspaceId}/markdown/bootstrap`
 - Binary:
   - upload ticket
+  - resumable upload by byte offset
   - authenticated upload content endpoint
+  - authenticated ranged download endpoint
   - `commit_blob_revision`
   - download ticket
 

@@ -17,6 +17,25 @@ import {
 } from "../core/hashes";
 import { BlobObject } from "../domain/types";
 
+export interface BlobStreamResult {
+  metadata: BlobObject;
+  stream: Readable;
+  startOffset: number;
+  endOffset: number;
+  contentLength: number;
+}
+
+export interface BlobUploadProgress {
+  uploadedBytes: number;
+}
+
+export interface BlobUploadChunkResult {
+  uploadedBytes: number;
+  complete: boolean;
+  hash?: string;
+  sizeBytes: number;
+}
+
 interface StoredBlobMetadata {
   hash: string;
   sizeBytes: number;
@@ -37,7 +56,13 @@ interface StorageBackend {
     sizeBytes: number
   ): Promise<BlobObject>;
   loadBlob(hash: string): Promise<{ metadata: BlobObject; payload: Buffer } | null>;
-  loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null>;
+  loadBlobStream(
+    hash: string,
+    range?: {
+      startOffset?: number;
+      endOffset?: number;
+    }
+  ): Promise<BlobStreamResult | null>;
 }
 
 interface ActiveUploadRecord {
@@ -253,15 +278,41 @@ class LocalStorageBackend implements StorageBackend {
     return null;
   }
 
-  async loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null> {
+  async loadBlobStream(
+    hash: string,
+    range?: {
+      startOffset?: number;
+      endOffset?: number;
+    }
+  ): Promise<BlobStreamResult | null> {
     await this.ensureReady();
 
     for (const digest of hashDigestCandidates(hash)) {
       try {
         const metadataRaw = await fs.readFile(this.blobMetadataPathFromDigest(digest), "utf8");
+        const metadata = JSON.parse(metadataRaw) as BlobObject;
+        if (metadata.sizeBytes === 0) {
+          return {
+            metadata,
+            stream: Readable.from([]),
+            startOffset: 0,
+            endOffset: -1,
+            contentLength: 0
+          };
+        }
+        const { startOffset, endOffset, contentLength } = resolveByteRange(
+          metadata.sizeBytes,
+          range
+        );
         return {
-          metadata: JSON.parse(metadataRaw) as BlobObject,
-          stream: createReadStream(this.blobBinaryPathFromDigest(digest))
+          metadata,
+          stream: createReadStream(this.blobBinaryPathFromDigest(digest), {
+            start: startOffset,
+            end: endOffset
+          }),
+          startOffset,
+          endOffset,
+          contentLength
         };
       } catch (error) {
         if (isNotFoundError(error)) {
@@ -450,7 +501,13 @@ class MinioStorageBackend implements StorageBackend {
     return null;
   }
 
-  async loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null> {
+  async loadBlobStream(
+    hash: string,
+    range?: {
+      startOffset?: number;
+      endOffset?: number;
+    }
+  ): Promise<BlobStreamResult | null> {
     await this.ensureReady();
 
     for (const digest of hashDigestCandidates(hash)) {
@@ -460,13 +517,33 @@ class MinioStorageBackend implements StorageBackend {
       }
 
       try {
-        const stream = await this.client.getObject(
+        const metadata = JSON.parse(metadataRaw.toString("utf8")) as BlobObject;
+        if (metadata.sizeBytes === 0) {
+          return {
+            metadata,
+            stream: Readable.from([]),
+            startOffset: 0,
+            endOffset: -1,
+            contentLength: 0
+          };
+        }
+        const { startOffset, endOffset, contentLength } = resolveByteRange(
+          metadata.sizeBytes,
+          range
+        );
+        const requestedLength = endOffset - startOffset + 1;
+        const stream = await this.client.getPartialObject(
           this.bucket,
-          this.blobBinaryObjectNameFromDigest(digest)
+          this.blobBinaryObjectNameFromDigest(digest),
+          startOffset,
+          requestedLength
         );
         return {
-          metadata: JSON.parse(metadataRaw.toString("utf8")) as BlobObject,
-          stream
+          metadata,
+          stream,
+          startOffset,
+          endOffset,
+          contentLength
         };
       } catch (error) {
         if (isNotFoundError(error)) {
@@ -549,7 +626,6 @@ export class StorageService {
       this.readyPromise = (async () => {
         await this.backend.ensureReady();
         await fs.mkdir(this.uploadsDir, { recursive: true });
-        await this.cleanupStagingDirectory();
       })();
     }
 
@@ -572,17 +648,56 @@ export class StorageService {
     return this.backend.storeBlob(hash, payload, mimeType);
   }
 
-  async storeBlobUpload(
+  async getUploadProgress(uploadId: string): Promise<BlobUploadProgress> {
+    await this.ensureReady();
+
+    const stagingPath = this.getUploadStagingPath(uploadId);
+    // The partial staging file is the durable source of truth for resumable upload progress.
+    // Ticket metadata is synchronized from this byte count, not the other way around.
+    try {
+      const stats = await fs.stat(stagingPath);
+      return {
+        uploadedBytes: stats.size
+      };
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return {
+          uploadedBytes: 0
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  async storeBlobUploadChunk(
     uploadId: string,
     hash: string,
     payload: Readable,
     mimeType: string,
-    sizeBytes: number
-  ): Promise<BlobObject> {
+    sizeBytes: number,
+    startOffset: number,
+    expectedChunkBytes?: number
+  ): Promise<BlobUploadChunkResult> {
     await this.ensureReady();
 
-    const stagingPath = path.join(this.uploadsDir, `${uploadId}.part`);
-    await fs.rm(stagingPath, { force: true });
+    const stagingPath = this.getUploadStagingPath(uploadId);
+    await fs.mkdir(path.dirname(stagingPath), { recursive: true });
+    const currentUploadedBytes = (await this.getUploadProgress(uploadId)).uploadedBytes;
+    if (currentUploadedBytes !== startOffset) {
+      throw new AppError(409, "blob_offset_mismatch", "Upload offset does not match server state.", {
+        expectedOffset: currentUploadedBytes,
+        receivedOffset: startOffset,
+        sizeBytes
+      });
+    }
+    if (startOffset > sizeBytes) {
+      throw new AppError(409, "blob_offset_mismatch", "Upload offset exceeds blob size.", {
+        expectedOffset: currentUploadedBytes,
+        receivedOffset: startOffset,
+        sizeBytes
+      });
+    }
 
     // Binary uploads are staged first and only become visible after commit_blob_revision updates
     // the room tree. Other users should never observe partial file content.
@@ -594,100 +709,179 @@ export class StorageService {
     });
 
     let receivedBytes = 0;
-    const digest = createHash("sha256");
     const counter = new Transform({
       transform(chunk, _encoding, callback) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         receivedBytes += buffer.byteLength;
-        if (receivedBytes > sizeBytes) {
+        if (
+          currentUploadedBytes + receivedBytes > sizeBytes ||
+          (expectedChunkBytes !== undefined && receivedBytes > expectedChunkBytes)
+        ) {
           callback(
             new AppError(400, "payload_too_large", "Blob size does not match upload ticket.")
           );
           return;
         }
 
-        digest.update(buffer);
         callback(null, buffer);
       }
     });
 
     try {
-      await pipeline(payload, counter, createWriteStream(stagingPath), {
+      await pipeline(payload, counter, createWriteStream(stagingPath, { flags: "a" }), {
         signal: controller.signal
       });
 
-      if (receivedBytes !== sizeBytes) {
+      if (
+        (expectedChunkBytes !== undefined && receivedBytes !== expectedChunkBytes) ||
+        currentUploadedBytes + receivedBytes > sizeBytes
+      ) {
+        await this.rollbackPartialAppend(stagingPath, currentUploadedBytes);
         throw new AppError(
           400,
-          "payload_too_large",
-          "Blob size does not match upload ticket.",
+          "invalid_request",
+          "Upload content does not match the declared byte range.",
           {
-            expectedSizeBytes: sizeBytes,
+            expectedChunkBytes,
             receivedSizeBytes: receivedBytes
           }
         );
+      }
+
+      const uploadedBytes = currentUploadedBytes + receivedBytes;
+      if (uploadedBytes < sizeBytes) {
+        return {
+          uploadedBytes,
+          complete: false,
+          sizeBytes
+        };
       }
 
       const expectedHash = normalizeSha256Hash(hash);
-      const calculatedHash = formatSha256Hash(digest.digest());
+      const calculatedHash = await sha256HashFromFile(stagingPath);
       if (calculatedHash !== expectedHash) {
-        throw new AppError(
-          400,
-          "blob_hash_mismatch",
-          "Uploaded blob hash does not match ticket.",
-          {
-            expectedHash,
-            actualHash: calculatedHash,
-            receivedSizeBytes: receivedBytes
-          }
-        );
+        await fs.rm(stagingPath, { force: true });
+        throw new AppError(400, "blob_hash_mismatch", "Uploaded blob hash does not match ticket.", {
+          expectedHash,
+          actualHash: calculatedHash,
+          receivedSizeBytes: uploadedBytes
+        });
       }
 
-      return await this.backend.storeBlobFromFile(expectedHash, stagingPath, mimeType, sizeBytes);
+      await this.backend.storeBlobFromFile(expectedHash, stagingPath, mimeType, sizeBytes);
+      return {
+        uploadedBytes,
+        complete: true,
+        hash: expectedHash,
+        sizeBytes
+      };
     } catch (error) {
       if (error instanceof AppError) {
         throw error;
       }
       if (controller.signal.aborted) {
+        await this.rollbackPartialAppend(stagingPath, currentUploadedBytes);
         throw new AppError(409, "upload_canceled", "Upload was canceled.");
       }
       if (isAbortLikeError(error)) {
+        await this.rollbackPartialAppend(stagingPath, currentUploadedBytes);
         throw new AppError(400, "upload_incomplete", "Upload did not complete.");
       }
       throw error;
     } finally {
       this.activeUploads.delete(uploadId);
-      await fs.rm(stagingPath, { force: true });
     }
   }
 
   async cancelActiveUpload(uploadId: string): Promise<boolean> {
     const activeUpload = this.activeUploads.get(uploadId);
-    if (!activeUpload) {
-      return false;
+    if (activeUpload) {
+      // Abort the streaming pipeline and let the caller remove the logical upload ticket from app
+      // state. Both pieces are needed for a clean cancel.
+      activeUpload.controller.abort();
     }
 
-    // Abort the streaming pipeline and let the caller remove the logical upload ticket from app
-    // state. Both pieces are needed for a clean cancel.
-    activeUpload.controller.abort();
-    await fs.rm(activeUpload.stagingPath, { force: true });
-    return true;
+    await fs.rm(this.getUploadStagingPath(uploadId), { force: true });
+    return Boolean(activeUpload);
   }
 
   async loadBlob(hash: string): Promise<{ metadata: BlobObject; payload: Buffer } | null> {
     return this.backend.loadBlob(hash);
   }
 
-  async loadBlobStream(hash: string): Promise<{ metadata: BlobObject; stream: Readable } | null> {
-    return this.backend.loadBlobStream(hash);
+  async loadBlobStream(
+    hash: string,
+    range?: {
+      startOffset?: number;
+      endOffset?: number;
+    }
+  ): Promise<BlobStreamResult | null> {
+    return this.backend.loadBlobStream(hash, range);
   }
 
-  private async cleanupStagingDirectory(): Promise<void> {
-    const entries = await fs.readdir(this.uploadsDir, { withFileTypes: true });
-    await Promise.all(
-      entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".part"))
-        .map((entry) => fs.rm(path.join(this.uploadsDir, entry.name), { force: true }))
-    );
+  private getUploadStagingPath(uploadId: string): string {
+    return path.join(this.uploadsDir, `${uploadId}.part`);
   }
+
+  private async rollbackPartialAppend(stagingPath: string, expectedBytes: number): Promise<void> {
+    if (expectedBytes === 0) {
+      await fs.rm(stagingPath, { force: true });
+      return;
+    }
+
+    try {
+      await fs.truncate(stagingPath, expectedBytes);
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        return;
+      }
+
+      throw error;
+    }
+  }
+}
+
+function resolveByteRange(
+  sizeBytes: number,
+  range?: {
+    startOffset?: number;
+    endOffset?: number;
+  }
+): {
+  startOffset: number;
+  endOffset: number;
+  contentLength: number;
+} {
+  const startOffset = range?.startOffset ?? 0;
+  const requestedEndOffset = range?.endOffset;
+  const endOffset = requestedEndOffset ?? sizeBytes - 1;
+
+  if (
+    startOffset < 0 ||
+    endOffset < 0 ||
+    startOffset >= sizeBytes ||
+    endOffset >= sizeBytes ||
+    endOffset < startOffset
+  ) {
+    throw new AppError(416, "invalid_range", "Requested byte range is not satisfiable.", {
+      sizeBytes,
+      startOffset,
+      endOffset
+    });
+  }
+
+  return {
+    startOffset,
+    endOffset,
+    contentLength: endOffset - startOffset + 1
+  };
+}
+
+async function sha256HashFromFile(filePath: string): Promise<string> {
+  const digest = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) {
+    digest.update(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return formatSha256Hash(digest.digest());
 }

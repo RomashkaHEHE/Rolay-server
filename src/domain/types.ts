@@ -180,6 +180,7 @@ export interface BlobUploadTicketRecord {
   hash: string;
   sizeBytes: number;
   mimeType: string;
+  uploadedBytes: number;
   expiresAt: string;
 }
 

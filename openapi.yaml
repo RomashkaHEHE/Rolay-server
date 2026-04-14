@@ -869,6 +869,44 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
+  /v1/files/{entryId}/blob/content:
+    get:
+      tags: [files]
+      summary: Download current binary file revision through the authenticated API
+      operationId: downloadBlobContent
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EntryId'
+        - name: Range
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Optional HTTP byte range, for example `bytes=1048576-`.
+      responses:
+        '200':
+          description: Full blob payload
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Partial blob payload
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '416':
+          $ref: '#/components/responses/ErrorRangeNotSatisfiable'
   /v1/files/{entryId}/blob/uploads/{uploadId}:
     delete:
       tags: [files]
@@ -910,6 +948,14 @@ paths:
           required: true
           schema:
             type: string
+        - name: Content-Range
+          in: header
+          required: false
+          schema:
+            type: string
+          description: >
+            Optional byte range for resumable upload append. Expected form:
+            `bytes start-end/total`.
       requestBody:
         required: true
         content:
@@ -926,6 +972,8 @@ paths:
                 $ref: '#/components/schemas/BlobUploadContentResponse'
         '400':
           $ref: '#/components/responses/ErrorBadRequest'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
@@ -961,6 +1009,12 @@ paths:
         type: string
       description: Stable file entry identifier.
   responses:
+    ErrorBadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     ErrorUnauthorized:
       description: Unauthorized
       content:
@@ -981,6 +1035,12 @@ paths:
             $ref: '#/components/schemas/ErrorResponse'
     ErrorConflict:
       description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ErrorRangeNotSatisfiable:
+      description: Requested range is not satisfiable
       content:
         application/json:
           schema:
@@ -1296,9 +1356,8 @@ paths:
         displayName:
           type: string
         color:
-          type:
-            - string
-            - 'null'
+          type: string
+          nullable: true
         hasSelection:
           type: boolean
     NotePresenceNote:
@@ -1633,6 +1692,13 @@ paths:
           minimum: 0
         mimeType:
           type: string
+        uploadedBytes:
+          type: integer
+          minimum: 0
+          description: Number of bytes already staged for this upload session.
+        status:
+          type: string
+          enum: [pending, uploading, ready, expired]
         expiresAt:
           type: string
           format: date-time
@@ -1669,7 +1735,7 @@ paths:
     BlobDownloadTicketResponse:
       type: object
       additionalProperties: false
-      required: [hash, sizeBytes, mimeType, url]
+      required: [hash, sizeBytes, mimeType, url, contentUrl, rangeSupported]
       properties:
         hash:
           type: string
@@ -1682,6 +1748,11 @@ paths:
         url:
           type: string
           format: uri
+        contentUrl:
+          type: string
+          format: uri
+        rangeSupported:
+          type: boolean
     CancelBlobUploadResponse:
       type: object
       additionalProperties: false
@@ -1696,13 +1767,25 @@ paths:
     BlobUploadContentResponse:
       type: object
       additionalProperties: false
-      required: [ok, hash, sizeBytes]
+      required: [ok, uploadId, receivedBytes, uploadedBytes, sizeBytes, complete]
       properties:
         ok:
           type: boolean
+        uploadId:
+          type: string
+        receivedBytes:
+          type: integer
+          minimum: 0
+          description: Total accepted byte count after this request.
+        uploadedBytes:
+          type: integer
+          minimum: 0
+          description: Alias of `receivedBytes` for client progress bookkeeping.
+        complete:
+          type: boolean
         hash:
           type: string
-          description: Canonical `sha256:<base64>` digest for the uploaded blob.
+          description: Canonical `sha256:<base64>` digest for the uploaded blob when the upload reaches completion.
         sizeBytes:
           type: integer
           minimum: 0

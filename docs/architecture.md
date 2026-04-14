@@ -125,6 +125,7 @@ Flow:
 - client creates a binary placeholder in the tree
 - client requests an upload ticket
 - file is uploaded to server-side staging
+- client can resume upload from the server-confirmed byte offset
 - upload can be canceled before commit
 - only after `commit_blob_revision` does the new file version become visible to everyone else
 
@@ -256,13 +257,16 @@ Large binary uploads now follow a stage-then-commit model.
 Important properties:
 
 - upload is streamed through the server
+- upload can resume from the last confirmed byte offset
 - download is streamed to clients
+- download can resume through HTTP `Range`
 - upload has explicit cancel support
 - room members do not see a new blob revision until `commit_blob_revision`
 - clients can show progress using:
-  - upload ticket metadata
-  - download ticket metadata
+  - upload ticket `uploadedBytes`
+  - upload and download `sizeBytes`
   - HTTP `Content-Length`
+  - HTTP `Content-Range`
 
 This is safer than exposing partial binary content while an upload is still running.
 
@@ -276,7 +280,6 @@ Current constraints:
 - one in-memory listener fanout for SSE
 - one `Hocuspocus` instance
 - no Redis or distributed pub/sub
-- no resumable chunked uploads yet
 - no background GC for orphaned blob payloads yet
 
 That is acceptable for the current product scope, but it is not a large multi-node architecture yet.

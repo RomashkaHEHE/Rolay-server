@@ -417,6 +417,8 @@ Response now includes:
 - `hash`
 - `sizeBytes`
 - `mimeType`
+- `uploadedBytes`
+- `status`
 - `expiresAt`
 - `upload`
 - `cancel`
@@ -425,6 +427,8 @@ Behavior:
 
 - if `alreadyExists=true`, client should skip byte upload and go directly to `commit_blob_revision`
 - if `alreadyExists=false`, client should upload bytes to `upload.url`
+- if the same user asks again for the same unfinished `entryId + hash + sizeBytes + mimeType`,
+  the server returns the existing upload session with current `uploadedBytes`
 
 ### Authenticated blob content upload
 
@@ -441,16 +445,30 @@ Expected request:
 - raw binary body
 - usually `Content-Type: application/octet-stream`
 - `Content-Length`
+- optional `Content-Range: bytes start-end/total` for resumable append
 
 The server also accepts the ticket mime type as transport `Content-Type`.
 
 Response:
 
 - `ok`
-- `hash`
+- `uploadId`
+- `receivedBytes`
+- `uploadedBytes`
 - `sizeBytes`
+- `complete`
+- optional `hash` when upload is complete
 
 Returned `hash` is canonical `sha256:<base64>` even if the upload ticket was created from a hex digest.
+
+Resume rules:
+
+- server uses the staged upload as the source of truth for `uploadedBytes`
+- if `Content-Range` start does not match the last confirmed offset, server returns:
+  - `409 blob_offset_mismatch`
+  - `error.details.expectedOffset`
+  - `error.details.receivedOffset`
+- old single-shot uploads without `Content-Range` still work when the upload starts from byte `0`
 
 ### Cancel upload
 
@@ -480,18 +498,73 @@ Response now includes:
 - `sizeBytes`
 - `mimeType`
 - `url`
+- `contentUrl`
+- `rangeSupported`
 
-### Download payload
+### Authenticated ranged download
+
+- `GET /v1/files/{entryId}/blob/content`
+
+Request:
+
+- Bearer access token
+- optional `Range: bytes=start-end` or `Range: bytes=start-`
+
+Response:
+
+- `200 OK` for full body
+- `206 Partial Content` for ranged response
+- `Accept-Ranges: bytes`
+- `Content-Length`
+- `Content-Range` on partial responses
+- `X-Rolay-Blob-Hash`
+- `Content-Type`
+
+This is the preferred desktop-friendly path for resumable downloads.
+
+### Ticket download payload
 
 Client then requests the returned URL.
 
-Server responds with streaming payload and sets:
+Server responds with streaming payload and now also supports `Range` requests until ticket expiry.
+It sets:
 
 - `Content-Type`
+- `Accept-Ranges`
 - `Content-Length`
+- `Content-Range` on partial responses
 - `X-Rolay-Blob-Hash`
 
-This is enough for real byte-based download progress UI.
+This keeps legacy ticket-based download flow compatible while the authenticated ranged endpoint
+becomes the cleaner long-lived client path.
+
+Example resumable upload ticket response:
+
+```json
+{
+  "alreadyExists": false,
+  "uploadId": "upl_123",
+  "hash": "sha256:abcd...",
+  "sizeBytes": 7340032,
+  "mimeType": "image/png",
+  "uploadedBytes": 2097152,
+  "status": "uploading",
+  "expiresAt": "2026-04-14T12:00:00.000Z"
+}
+```
+
+Example resumed upload chunk response:
+
+```json
+{
+  "ok": true,
+  "uploadId": "upl_123",
+  "receivedBytes": 3145728,
+  "uploadedBytes": 3145728,
+  "sizeBytes": 7340032,
+  "complete": false
+}
+```
 
 ### Binary revision event
 

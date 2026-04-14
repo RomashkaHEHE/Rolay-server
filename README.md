@@ -40,6 +40,7 @@ New agent start here:
 - live file endpoints: `POST /v1/files/:entryId/crdt-token`
 - live file endpoints: `POST /v1/files/:entryId/blob/upload-ticket`
 - live file endpoints: `PUT /v1/files/:entryId/blob/uploads/:uploadId/content`
+- live file endpoints: `GET /v1/files/:entryId/blob/content`
 - live file endpoints: `POST /v1/files/:entryId/blob/download-ticket`
 - live file endpoints: `DELETE /v1/files/:entryId/blob/uploads/:uploadId`
 - live CRDT runtime: `Yjs` + `Hocuspocus` websocket server on `/v1/crdt`
@@ -56,8 +57,10 @@ New agent start here:
 - binary files are synced as blob objects addressed by `sha256`
 - server accepts `sha256` digests in hex or base64 form and normalizes them to canonical base64 in API responses and persisted state
 - binary uploads are staged and streamed through the server before `commit_blob_revision`
+- binary uploads are resumable by byte offset and return `uploadedBytes` on resumed tickets
 - desktop clients can upload blob bytes through an authenticated API endpoint instead of relying only on raw ticket URLs
-- binary download progress can be driven by `sizeBytes` metadata plus HTTP `Content-Length`
+- binary downloads support authenticated HTTP `Range` requests with `206 Partial Content`
+- binary progress can be driven by `uploadedBytes`, `sizeBytes`, `Content-Length`, and `Content-Range`
 - server state currently persists as a single snapshot row in PostgreSQL
 - document payloads and blobs can live either on local disk or in MinIO/S3-compatible storage
 
@@ -114,4 +117,4 @@ Managed accounts:
 - replace the snapshot-style PostgreSQL persistence with a normalized relational model
 - add a reverse proxy and move public access from `:3000` to `80/443`
 - add background cleanup for orphaned blob payloads and expired upload artifacts
-- consider resumable uploads if large-file traffic grows
+- add background cleanup for orphaned resumable upload sessions

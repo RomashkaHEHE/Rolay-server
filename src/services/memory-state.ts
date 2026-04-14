@@ -34,7 +34,7 @@ export interface StoredWorkspaceSnapshot {
 }
 
 export interface MemoryStateSnapshot {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   users: StoredUser[];
   devices: DeviceSession[];
   accessTokens: AccessTokenRecord[];
@@ -140,7 +140,10 @@ export class MemoryState {
     }
 
     for (const uploadTicket of snapshot.blobUploadTickets) {
-      state.blobUploadTickets.set(uploadTicket.ticketId, uploadTicket);
+      state.blobUploadTickets.set(uploadTicket.ticketId, {
+        ...uploadTicket,
+        uploadedBytes: uploadTicket.uploadedBytes ?? 0
+      });
     }
 
     for (const downloadTicket of snapshot.blobDownloadTickets) {
@@ -157,7 +160,7 @@ export class MemoryState {
 
   toSnapshot(): MemoryStateSnapshot {
     return {
-      version: 3,
+      version: 4,
       users: [...this.users.values()].map((user) => ({
         ...user,
         isAdmin: Boolean(user.isAdmin)

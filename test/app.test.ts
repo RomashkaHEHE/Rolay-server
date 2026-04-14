@@ -341,6 +341,7 @@ test("memory state snapshot round-trip preserves persisted records", async () =>
     hash: "sha256:blob",
     sizeBytes: 5,
     mimeType: "text/plain",
+    uploadedBytes: 0,
     expiresAt: "2026-01-01T01:00:00.000Z"
   });
   state.blobDownloadTickets.set("download_1", {
@@ -1451,6 +1452,7 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
   assert.equal(memberUploadTicket.json().uploadId.length > 0, true);
   assert.equal(memberUploadTicket.json().sizeBytes, binaryPayload.byteLength);
   assert.equal(memberUploadTicket.json().mimeType, "image/png");
+  assert.equal(memberUploadTicket.json().uploadedBytes, 0);
   assert.equal(memberUploadTicket.json().cancel.method, "DELETE");
   const uploadPath = new URL(memberUploadTicket.json().upload.url).pathname;
 
@@ -1463,7 +1465,10 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
     payload: binaryPayload
   });
 
-  assert.equal(uploadResponse.statusCode, 201);
+  assert.equal(uploadResponse.statusCode, 200);
+  assert.equal(uploadResponse.json().complete, true);
+  assert.equal(uploadResponse.json().uploadedBytes, binaryPayload.byteLength);
+  assert.equal(uploadResponse.json().hash, binaryHash);
 
   const commitBlobResponse = await app.inject({
     method: "POST",
@@ -1512,6 +1517,11 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
   assert.equal(downloadTicketResponse.statusCode, 200);
   assert.equal(downloadTicketResponse.json().sizeBytes, binaryPayload.byteLength);
   assert.equal(downloadTicketResponse.json().mimeType, "image/png");
+  assert.equal(downloadTicketResponse.json().rangeSupported, true);
+  assert.equal(
+    downloadTicketResponse.json().contentUrl,
+    `${env.publicBaseUrl}/v1/files/${binaryEntry.id}/blob/content`
+  );
   const downloadPath = new URL(downloadTicketResponse.json().url).pathname;
   const downloadResponse = await app.inject({
     method: "GET",
@@ -1521,6 +1531,8 @@ test("file endpoints issue CRDT tokens and blob tickets for room members", async
   assert.equal(downloadResponse.statusCode, 200);
   assert.equal(downloadResponse.headers["content-type"], "image/png");
   assert.equal(downloadResponse.headers["content-length"], String(binaryPayload.byteLength));
+  assert.equal(downloadResponse.headers["accept-ranges"], "bytes");
+  assert.equal(downloadResponse.headers["x-rolay-blob-hash"], binaryHash);
   assert.equal(downloadResponse.body, binaryPayload.toString("utf8"));
 
   await app.close();
@@ -1608,8 +1620,12 @@ test("authenticated blob content upload endpoint accepts raw octet-stream and re
   assert.equal(uploadContentResponse.statusCode, 200);
   assert.deepEqual(uploadContentResponse.json(), {
     ok: true,
-    hash,
-    sizeBytes: payload.byteLength
+    uploadId,
+    receivedBytes: payload.byteLength,
+    uploadedBytes: payload.byteLength,
+    sizeBytes: payload.byteLength,
+    complete: true,
+    hash
   });
 
   const commitResponse = await app.inject({
@@ -1751,6 +1767,7 @@ test("blob uploads accept hex sha256 digests and normalize them to canonical sto
 
   assert.equal(uploadTicketResponse.statusCode, 200);
   assert.equal(uploadTicketResponse.json().hash, canonicalHash);
+  assert.equal(uploadTicketResponse.json().uploadedBytes, 0);
   const uploadId = uploadTicketResponse.json().uploadId;
 
   const uploadContentResponse = await app.inject({
@@ -1765,6 +1782,8 @@ test("blob uploads accept hex sha256 digests and normalize them to canonical sto
 
   assert.equal(uploadContentResponse.statusCode, 200);
   assert.equal(uploadContentResponse.json().hash, canonicalHash);
+  assert.equal(uploadContentResponse.json().complete, true);
+  assert.equal(uploadContentResponse.json().uploadedBytes, payload.byteLength);
 
   const commitResponse = await app.inject({
     method: "POST",
@@ -1803,6 +1822,7 @@ test("blob uploads accept hex sha256 digests and normalize them to canonical sto
 
   assert.equal(downloadTicketResponse.statusCode, 200);
   assert.equal(downloadTicketResponse.json().hash, canonicalHash);
+  assert.equal(downloadTicketResponse.json().rangeSupported, true);
 
   await app.close();
   await cleanupTestEnv(env);
@@ -1903,6 +1923,336 @@ test("blob upload sessions can be canceled before transfer begins", async () => 
 
   assert.equal(uploadAfterCancelResponse.statusCode, 404);
   assert.equal(uploadAfterCancelResponse.json().error.code, "upload_ticket_not_found");
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("blob uploads can be resumed from the last confirmed byte offset", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Resumable Uploads"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_resumable_binary",
+          type: "create_binary_placeholder",
+          path: "attachments/archive.bin"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const binaryEntry = createEntryResponse.json().results[0].entry;
+  const payload = Buffer.from("0123456789abcdef", "utf8");
+  const firstChunk = payload.subarray(0, 6);
+  const secondChunk = payload.subarray(6);
+  const hash = createSha256Hash(payload);
+
+  const initialTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "application/octet-stream"
+    }
+  });
+
+  assert.equal(initialTicketResponse.statusCode, 200);
+  assert.equal(initialTicketResponse.json().uploadedBytes, 0);
+  const uploadId = initialTicketResponse.json().uploadId;
+
+  const firstChunkResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${binaryEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "application/octet-stream",
+      "content-range": `bytes 0-${firstChunk.byteLength - 1}/${payload.byteLength}`
+    },
+    payload: firstChunk
+  });
+
+  assert.equal(firstChunkResponse.statusCode, 200);
+  assert.deepEqual(firstChunkResponse.json(), {
+    ok: true,
+    uploadId,
+    receivedBytes: firstChunk.byteLength,
+    uploadedBytes: firstChunk.byteLength,
+    sizeBytes: payload.byteLength,
+    complete: false
+  });
+
+  const resumedTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "application/octet-stream"
+    }
+  });
+
+  assert.equal(resumedTicketResponse.statusCode, 200);
+  assert.equal(resumedTicketResponse.json().uploadId, uploadId);
+  assert.equal(resumedTicketResponse.json().uploadedBytes, firstChunk.byteLength);
+  assert.equal(resumedTicketResponse.json().status, "uploading");
+
+  const mismatchOffsetResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${binaryEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "application/octet-stream",
+      "content-range": `bytes 0-${secondChunk.byteLength - 1}/${payload.byteLength}`
+    },
+    payload: secondChunk
+  });
+
+  assert.equal(mismatchOffsetResponse.statusCode, 409);
+  assert.equal(mismatchOffsetResponse.json().error.code, "blob_offset_mismatch");
+  assert.equal(
+    mismatchOffsetResponse.json().error.details.expectedOffset,
+    firstChunk.byteLength
+  );
+  assert.equal(mismatchOffsetResponse.json().error.details.receivedOffset, 0);
+
+  const secondChunkResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${binaryEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "application/octet-stream",
+      "content-range": `bytes ${firstChunk.byteLength}-${payload.byteLength - 1}/${payload.byteLength}`
+    },
+    payload: secondChunk
+  });
+
+  assert.equal(secondChunkResponse.statusCode, 200);
+  assert.deepEqual(secondChunkResponse.json(), {
+    ok: true,
+    uploadId,
+    receivedBytes: payload.byteLength,
+    uploadedBytes: payload.byteLength,
+    sizeBytes: payload.byteLength,
+    complete: true,
+    hash
+  });
+
+  const readyTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "application/octet-stream"
+    }
+  });
+
+  assert.equal(readyTicketResponse.statusCode, 200);
+  assert.equal(readyTicketResponse.json().alreadyExists, true);
+  assert.equal(readyTicketResponse.json().uploadedBytes, payload.byteLength);
+  assert.equal(readyTicketResponse.json().status, "ready");
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("authenticated blob content endpoint supports ranged downloads", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Ranged Downloads"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_ranged_binary",
+          type: "create_binary_placeholder",
+          path: "attachments/slides.pdf"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const binaryEntry = createEntryResponse.json().results[0].entry;
+  const payload = Buffer.from("abcdefghijklmnop", "utf8");
+  const hash = createSha256Hash(payload);
+
+  const uploadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "application/pdf"
+    }
+  });
+
+  assert.equal(uploadTicketResponse.statusCode, 200);
+  const uploadId = uploadTicketResponse.json().uploadId;
+
+  const uploadContentResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${binaryEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "application/octet-stream"
+    },
+    payload
+  });
+
+  assert.equal(uploadContentResponse.statusCode, 200);
+  assert.equal(uploadContentResponse.json().complete, true);
+
+  const commitResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_ranged_binary_commit",
+          type: "commit_blob_revision",
+          entryId: binaryEntry.id,
+          hash,
+          sizeBytes: payload.byteLength,
+          mimeType: "application/pdf",
+          preconditions: {
+            entryVersion: binaryEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(commitResponse.statusCode, 200);
+
+  const partialDownloadResponse = await app.inject({
+    method: "GET",
+    url: `/v1/files/${binaryEntry.id}/blob/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      range: "bytes=5-9"
+    }
+  });
+
+  assert.equal(partialDownloadResponse.statusCode, 206);
+  assert.equal(partialDownloadResponse.headers["accept-ranges"], "bytes");
+  assert.equal(partialDownloadResponse.headers["content-type"], "application/pdf");
+  assert.equal(partialDownloadResponse.headers["content-length"], "5");
+  assert.equal(
+    partialDownloadResponse.headers["content-range"],
+    `bytes 5-9/${payload.byteLength}`
+  );
+  assert.equal(partialDownloadResponse.headers["x-rolay-blob-hash"], hash);
+  assert.equal(partialDownloadResponse.body, payload.subarray(5, 10).toString("utf8"));
+
+  const downloadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${binaryEntry.id}/blob/download-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(downloadTicketResponse.statusCode, 200);
+  const downloadPath = new URL(downloadTicketResponse.json().url).pathname;
+  const ticketRangeResponse = await app.inject({
+    method: "GET",
+    url: downloadPath,
+    headers: {
+      range: "bytes=10-"
+    }
+  });
+
+  assert.equal(ticketRangeResponse.statusCode, 206);
+  assert.equal(ticketRangeResponse.headers["accept-ranges"], "bytes");
+  assert.equal(
+    ticketRangeResponse.headers["content-range"],
+    `bytes 10-${payload.byteLength - 1}/${payload.byteLength}`
+  );
+  assert.equal(ticketRangeResponse.body, payload.subarray(10).toString("utf8"));
 
   await app.close();
   await cleanupTestEnv(env);

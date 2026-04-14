@@ -103,6 +103,7 @@ Each route module is intentionally thin. If you need actual behavior, jump from 
   - markdown bootstrap
   - CRDT token
   - blob upload ticket
+  - authenticated ranged blob content download
   - authenticated blob content upload
   - blob download ticket
   - cancel blob upload
@@ -134,7 +135,8 @@ Most business logic lives here.
 - `src/services/file-service.ts`
   - markdown bootstrap
   - CRDT token issuance
-  - blob ticket issuance
+  - resumable blob upload ticket issuance
+  - authenticated ranged blob reads
   - cancel upload API behavior
 
 - `src/services/realtime-service.ts`
@@ -153,8 +155,8 @@ Most business logic lives here.
 
 - `src/services/storage-service.ts`
   - local or MinIO-backed object/document persistence
-  - staged streaming blob uploads
-  - streaming blob downloads
+  - staged resumable blob uploads
+  - ranged blob downloads
   - active upload cancellation
 
 - `src/services/state-store.ts`
@@ -206,6 +208,7 @@ This is another critical split.
 ### Binary
 
 - route: `POST /v1/files/{entryId}/blob/upload-ticket`
+- route: `GET /v1/files/{entryId}/blob/content`
 - route: `PUT /v1/files/{entryId}/blob/uploads/{uploadId}/content`
 - route: `DELETE /v1/files/{entryId}/blob/uploads/{uploadId}`
 - route: `POST /v1/files/{entryId}/blob/download-ticket`
