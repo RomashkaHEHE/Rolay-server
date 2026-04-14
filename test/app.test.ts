@@ -2312,6 +2312,270 @@ test("excalidraw entries use blob persistence and reject markdown-only endpoints
   await cleanupTestEnv(env);
 });
 
+test("excalidraw entries support blob-only fallback flow without drawing websocket", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Excalidraw Fallback Room"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_create_excalidraw_fallback",
+          type: "create_excalidraw",
+          path: "Boards/Session-1.excalidraw.md"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const drawingEntry = createEntryResponse.json().results[0].entry;
+  assert.equal(drawingEntry.kind, "excalidraw");
+  assert.equal(drawingEntry.contentMode, "blob");
+
+  const payload = Buffer.from("# Excalidraw fallback payload\n", "utf8");
+  const hash = createSha256Hash(payload);
+  const uploadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "text/markdown"
+    }
+  });
+
+  assert.equal(uploadTicketResponse.statusCode, 200);
+  assert.equal(uploadTicketResponse.json().alreadyExists, false);
+  const uploadId = uploadTicketResponse.json().uploadId;
+
+  const uploadContentResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${drawingEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "text/markdown"
+    },
+    payload
+  });
+
+  assert.equal(uploadContentResponse.statusCode, 200);
+
+  const commitResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_commit_excalidraw_fallback_blob",
+          type: "commit_blob_revision",
+          entryId: drawingEntry.id,
+          hash,
+          sizeBytes: payload.byteLength,
+          mimeType: "text/markdown",
+          preconditions: {
+            entryVersion: drawingEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(commitResponse.statusCode, 200);
+  const committedEntry = commitResponse.json().results[0].entry;
+  assert.equal(committedEntry.kind, "excalidraw");
+  assert.equal(committedEntry.blob.hash, hash);
+
+  const renameResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_rename_excalidraw_fallback",
+          type: "rename_entry",
+          entryId: drawingEntry.id,
+          newPath: "Boards/Session-1-renamed.excalidraw.md",
+          preconditions: {
+            entryVersion: committedEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(renameResponse.statusCode, 200);
+  const renamedEntry = renameResponse.json().results[0].entry;
+  assert.equal(renamedEntry.path, "Boards/Session-1-renamed.excalidraw.md");
+  assert.equal(renamedEntry.kind, "excalidraw");
+  assert.equal(renamedEntry.blob.hash, hash);
+
+  const moveResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_move_excalidraw_fallback",
+          type: "move_entry",
+          entryId: drawingEntry.id,
+          newPath: "Archive/Session-1-renamed.excalidraw.md",
+          preconditions: {
+            entryVersion: renamedEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(moveResponse.statusCode, 200);
+  const movedEntry = moveResponse.json().results[0].entry;
+  assert.equal(movedEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(movedEntry.kind, "excalidraw");
+  assert.equal(movedEntry.blob.hash, hash);
+
+  const downloadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/blob/download-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(downloadTicketResponse.statusCode, 200);
+  assert.equal(downloadTicketResponse.json().hash, hash);
+  assert.equal(downloadTicketResponse.json().mimeType, "text/markdown");
+  const downloadPath = new URL(downloadTicketResponse.json().url).pathname;
+  const downloadResponse = await app.inject({
+    method: "GET",
+    url: downloadPath
+  });
+
+  assert.equal(downloadResponse.statusCode, 200);
+  assert.equal(downloadResponse.headers["content-type"], "text/markdown");
+  assert.equal(downloadResponse.body, payload.toString("utf8"));
+
+  const deleteResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_delete_excalidraw_fallback",
+          type: "delete_entry",
+          entryId: drawingEntry.id,
+          preconditions: {
+            entryVersion: movedEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(deleteResponse.statusCode, 200);
+  const deletedEntry = deleteResponse.json().results[0].entry;
+  assert.equal(deletedEntry.deleted, true);
+
+  const restoreResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_restore_excalidraw_fallback",
+          type: "restore_entry",
+          entryId: drawingEntry.id,
+          preconditions: {
+            entryVersion: deletedEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(restoreResponse.statusCode, 200);
+  const restoredEntry = restoreResponse.json().results[0].entry;
+  assert.equal(restoredEntry.deleted, false);
+  assert.equal(restoredEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(restoredEntry.kind, "excalidraw");
+  assert.equal(restoredEntry.blob.hash, hash);
+
+  const treeResponse = await app.inject({
+    method: "GET",
+    url: `/v1/workspaces/${roomId}/tree`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(treeResponse.statusCode, 200);
+  const treeEntry = treeResponse
+    .json()
+    .entries.find((entry: { id: string }) => entry.id === drawingEntry.id);
+  assert.ok(treeEntry);
+  assert.equal(treeEntry.kind, "excalidraw");
+  assert.equal(treeEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(treeEntry.deleted, false);
+  assert.equal(treeEntry.blob.hash, hash);
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
 test("excalidraw drawing live sync supports lease, control requests, pointer broadcast, and reconnect snapshot", async () => {
   const env = createTestEnv({
     drawingSnapshotStoreDebounceMs: 50,
