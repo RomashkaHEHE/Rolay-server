@@ -80,6 +80,16 @@ const filesRoutes: FastifyPluginAsync = async (app) => {
     );
   });
 
+  app.post("/v1/files/:entryId/drawing-token", async (request) => {
+    const principal = requireAuth(app, request);
+    const params = asObject(request.params, "Expected route params.");
+
+    return app.rolay.drawings.createDrawingToken(
+      principal,
+      requireString(params, "entryId")
+    );
+  });
+
   app.post("/v1/files/:entryId/blob/upload-ticket", async (request, reply) => {
     attachTraceRequestId(reply, request.id);
 

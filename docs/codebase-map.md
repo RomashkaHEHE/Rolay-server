@@ -99,9 +99,14 @@ Each route module is intentionally thin. If you need actual behavior, jump from 
   - batch tree mutations
   - room SSE event stream
 
+- `src/modules/drawings/drawings.routes.ts`
+  - Excalidraw lease acquire/release
+  - control request approve/deny
+
 - `src/modules/files/files.routes.ts`
   - markdown bootstrap
   - CRDT token
+  - drawing token
   - blob upload ticket
   - authenticated ranged blob content download
   - authenticated blob content upload
@@ -149,6 +154,14 @@ Most business logic lives here.
   - room-level live note presence aggregation
   - viewer snapshot/update fanout
   - duplicate-presence handling for multi-device users
+
+- `src/services/drawing-service.ts`
+  - Excalidraw drawing tokens
+  - single-editor lease state
+  - control requests
+  - live scene snapshot broadcast
+  - editor pointer broadcast
+  - snapshot persistence for reconnects
 
 - `src/services/settings-events-service.ts`
   - settings/admin SSE event publication and visibility filtering
@@ -214,6 +227,15 @@ This is another critical split.
 - route: `POST /v1/files/{entryId}/blob/download-ticket`
 - storage implementation: `src/services/storage-service.ts`
 - tree publish point: `commit_blob_revision` in `src/services/workspace-service.ts`
+
+### Excalidraw
+
+- tree op: `create_excalidraw`
+- route: `POST /v1/files/{entryId}/drawing-token`
+- routes: `POST /v1/drawings/{entryId}/...`
+- runtime: `src/services/drawing-service.ts`
+- persistent serialized file: blob flow
+- live scene state: drawing websocket + stored reconnect snapshot
 
 ## Tests
 

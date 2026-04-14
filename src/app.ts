@@ -11,6 +11,7 @@ import { createRolayContext } from "./core/context";
 import { isAppError } from "./core/errors";
 import adminRoutes from "./modules/admin/admin.routes";
 import authRoutes from "./modules/auth/auth.routes";
+import drawingsRoutes from "./modules/drawings/drawings.routes";
 import filesRoutes from "./modules/files/files.routes";
 import invitesRoutes from "./modules/invites/invites.routes";
 import notePresenceRoutes from "./modules/note-presence/note-presence.routes";
@@ -72,8 +73,10 @@ export async function buildApp(
   app.addHook("onReady", async () => {
     await app.rolay.storage.ensureReady();
     await realtime.attach(app.server);
+    await app.rolay.drawings.attach(app.server);
   });
   app.addHook("onClose", async () => {
+    await app.rolay.drawings.close(app.server);
     await realtime.close(app.server);
     await app.rolay.stateStore.close();
   });
@@ -88,6 +91,7 @@ export async function buildApp(
   await app.register(workspacesRoutes);
   await app.register(notePresenceRoutes);
   await app.register(treeRoutes);
+  await app.register(drawingsRoutes);
   await app.register(filesRoutes);
   await app.register(storageRoutes);
 

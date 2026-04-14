@@ -31,6 +31,11 @@ function createTestEnv(overrides: Partial<AppEnv> = {}): AppEnv {
     crdtProvider: "yjs-hocuspocus",
     crdtWsUrl: "ws://localhost:3000/v1/crdt",
     crdtTokenTtlSeconds: 300,
+    drawingWsUrl: "ws://localhost:3000/v1/drawings",
+    drawingTokenTtlSeconds: 300,
+    drawingLeaseTtlSeconds: 30,
+    drawingSnapshotStoreDebounceMs: 100,
+    drawingPointerStaleMs: 1000,
     blobTicketTtlSeconds: 900,
     blobUploadBaseUrl: "http://localhost:3000/_storage/upload",
     blobDownloadBaseUrl: "http://localhost:3000/_storage/download",
@@ -102,6 +107,12 @@ interface SseStream {
   reader: ReadableStreamDefaultReader<Uint8Array>;
   decoder: TextDecoder;
   buffer: string;
+}
+
+interface JsonWebSocketStream {
+  socket: WebSocket;
+  queue: Record<string, unknown>[];
+  waiters: Array<(message: Record<string, unknown>) => void>;
 }
 
 async function openSseStream(url: string, accessToken: string): Promise<SseStream> {
@@ -205,6 +216,90 @@ async function waitForSseEventMatching<T>(
   }
 
   throw new Error(`Timed out after ${timeoutMs}ms waiting for matching SSE event "${eventName}".`);
+}
+
+async function openJsonWebSocketStream(url: string): Promise<JsonWebSocketStream> {
+  const socket = new WebSocket(url);
+  const stream: JsonWebSocketStream = {
+    socket,
+    queue: [],
+    waiters: []
+  };
+
+  socket.on("message", (payload) => {
+    const message = JSON.parse(
+      Buffer.isBuffer(payload) ? payload.toString("utf8") : String(payload)
+    ) as Record<string, unknown>;
+    const waiter = stream.waiters.shift();
+    if (waiter) {
+      waiter(message);
+      return;
+    }
+
+    stream.queue.push(message);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      socket.off("open", handleOpen);
+      socket.off("error", handleError);
+    };
+    const handleOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    socket.once("open", handleOpen);
+    socket.once("error", handleError);
+  });
+
+  return stream;
+}
+
+async function readNextWsMessage(
+  stream: JsonWebSocketStream,
+  timeoutMs = 2000
+): Promise<Record<string, unknown>> {
+  if (stream.queue.length > 0) {
+    return stream.queue.shift()!;
+  }
+
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      const index = stream.waiters.indexOf(handleMessage);
+      if (index >= 0) {
+        stream.waiters.splice(index, 1);
+      }
+      reject(new Error(`Timed out after ${timeoutMs}ms waiting for websocket message.`));
+    }, timeoutMs);
+
+    const handleMessage = (message: Record<string, unknown>) => {
+      clearTimeout(timeout);
+      resolve(message);
+    };
+
+    stream.waiters.push(handleMessage);
+  });
+}
+
+async function waitForWsMessageType(
+  stream: JsonWebSocketStream,
+  type: string,
+  timeoutMs = 2000
+): Promise<Record<string, unknown>> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= timeoutMs) {
+    const message = await readNextWsMessage(stream, timeoutMs);
+    if (message.type === type) {
+      return message;
+    }
+  }
+
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for websocket message "${type}".`);
 }
 
 async function loginAs(
@@ -2811,8 +2906,8 @@ test("markdown bootstrap endpoint returns current stored Yjs state for workspace
     }
   });
 
-  assert.equal(invalidBootstrapResponse.statusCode, 404);
-  assert.equal(invalidBootstrapResponse.json().error.code, "entry_not_found");
+  assert.equal(invalidBootstrapResponse.statusCode, 400);
+  assert.equal(invalidBootstrapResponse.json().error.code, "unsupported_entry_kind");
 
   const invalidIncludeStateResponse = await app.inject({
     method: "POST",
@@ -2827,6 +2922,809 @@ test("markdown bootstrap endpoint returns current stored Yjs state for workspace
 
   assert.equal(invalidIncludeStateResponse.statusCode, 400);
   assert.equal(invalidIncludeStateResponse.json().error.code, "invalid_request");
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("excalidraw entries use blob persistence and reject markdown-only endpoints", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Excalidraw Blob Room"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_create_excalidraw",
+          type: "create_excalidraw",
+          path: "Boards/Linear-Algebra.excalidraw.md"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const drawingEntry = createEntryResponse.json().results[0].entry;
+  assert.equal(drawingEntry.kind, "excalidraw");
+  assert.equal(drawingEntry.contentMode, "blob");
+
+  const drawingTokenResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/drawing-token`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(drawingTokenResponse.statusCode, 200);
+  assert.equal(drawingTokenResponse.json().entryId, drawingEntry.id);
+  assert.equal(drawingTokenResponse.json().provider, "rolay-excalidraw-live");
+
+  const crdtTokenResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/crdt-token`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(crdtTokenResponse.statusCode, 400);
+  assert.equal(crdtTokenResponse.json().error.code, "unsupported_entry_kind");
+
+  const bootstrapResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/markdown/bootstrap`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      entryIds: [drawingEntry.id]
+    }
+  });
+
+  assert.equal(bootstrapResponse.statusCode, 400);
+  assert.equal(bootstrapResponse.json().error.code, "unsupported_entry_kind");
+
+  const payload = Buffer.from("# Excalidraw Data\n", "utf8");
+  const hash = createSha256Hash(payload);
+  const uploadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "text/markdown"
+    }
+  });
+
+  assert.equal(uploadTicketResponse.statusCode, 200);
+  const uploadId = uploadTicketResponse.json().uploadId;
+
+  const uploadContentResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${drawingEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "text/markdown"
+    },
+    payload
+  });
+
+  assert.equal(uploadContentResponse.statusCode, 200);
+
+  const commitResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_commit_excalidraw_blob",
+          type: "commit_blob_revision",
+          entryId: drawingEntry.id,
+          hash,
+          sizeBytes: payload.byteLength,
+          mimeType: "text/markdown",
+          preconditions: {
+            entryVersion: drawingEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(commitResponse.statusCode, 200);
+  assert.equal(commitResponse.json().results[0].entry.kind, "excalidraw");
+  assert.equal(commitResponse.json().results[0].entry.blob.hash, hash);
+
+  const storedBlob = await app.rolay.storage.loadBlob(hash);
+  assert.ok(storedBlob);
+  assert.equal(storedBlob.metadata.mimeType, "text/markdown");
+  assert.equal(storedBlob.payload.toString("utf8"), "# Excalidraw Data\n");
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("excalidraw entries support blob-only fallback flow without drawing websocket", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Excalidraw Fallback Room"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_create_excalidraw_fallback",
+          type: "create_excalidraw",
+          path: "Boards/Session-1.excalidraw.md"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const drawingEntry = createEntryResponse.json().results[0].entry;
+  assert.equal(drawingEntry.kind, "excalidraw");
+  assert.equal(drawingEntry.contentMode, "blob");
+
+  const payload = Buffer.from("# Excalidraw fallback payload\n", "utf8");
+  const hash = createSha256Hash(payload);
+  const uploadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/blob/upload-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      hash,
+      sizeBytes: payload.byteLength,
+      mimeType: "text/markdown"
+    }
+  });
+
+  assert.equal(uploadTicketResponse.statusCode, 200);
+  assert.equal(uploadTicketResponse.json().alreadyExists, false);
+  const uploadId = uploadTicketResponse.json().uploadId;
+
+  const uploadContentResponse = await app.inject({
+    method: "PUT",
+    url: `/v1/files/${drawingEntry.id}/blob/uploads/${uploadId}/content`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`,
+      "content-type": "text/markdown"
+    },
+    payload
+  });
+
+  assert.equal(uploadContentResponse.statusCode, 200);
+
+  const commitResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_commit_excalidraw_fallback_blob",
+          type: "commit_blob_revision",
+          entryId: drawingEntry.id,
+          hash,
+          sizeBytes: payload.byteLength,
+          mimeType: "text/markdown",
+          preconditions: {
+            entryVersion: drawingEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(commitResponse.statusCode, 200);
+  const committedEntry = commitResponse.json().results[0].entry;
+  assert.equal(committedEntry.kind, "excalidraw");
+  assert.equal(committedEntry.blob.hash, hash);
+
+  const renameResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_rename_excalidraw_fallback",
+          type: "rename_entry",
+          entryId: drawingEntry.id,
+          newPath: "Boards/Session-1-renamed.excalidraw.md",
+          preconditions: {
+            entryVersion: committedEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(renameResponse.statusCode, 200);
+  const renamedEntry = renameResponse.json().results[0].entry;
+  assert.equal(renamedEntry.path, "Boards/Session-1-renamed.excalidraw.md");
+  assert.equal(renamedEntry.kind, "excalidraw");
+  assert.equal(renamedEntry.blob.hash, hash);
+
+  const moveResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_move_excalidraw_fallback",
+          type: "move_entry",
+          entryId: drawingEntry.id,
+          newPath: "Archive/Session-1-renamed.excalidraw.md",
+          preconditions: {
+            entryVersion: renamedEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(moveResponse.statusCode, 200);
+  const movedEntry = moveResponse.json().results[0].entry;
+  assert.equal(movedEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(movedEntry.kind, "excalidraw");
+  assert.equal(movedEntry.blob.hash, hash);
+
+  const downloadTicketResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/blob/download-ticket`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(downloadTicketResponse.statusCode, 200);
+  assert.equal(downloadTicketResponse.json().hash, hash);
+  assert.equal(downloadTicketResponse.json().mimeType, "text/markdown");
+  const downloadPath = new URL(downloadTicketResponse.json().url).pathname;
+  const downloadResponse = await app.inject({
+    method: "GET",
+    url: downloadPath
+  });
+
+  assert.equal(downloadResponse.statusCode, 200);
+  assert.equal(downloadResponse.headers["content-type"], "text/markdown");
+  assert.equal(downloadResponse.body, payload.toString("utf8"));
+
+  const deleteResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_delete_excalidraw_fallback",
+          type: "delete_entry",
+          entryId: drawingEntry.id,
+          preconditions: {
+            entryVersion: movedEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(deleteResponse.statusCode, 200);
+  const deletedEntry = deleteResponse.json().results[0].entry;
+  assert.equal(deletedEntry.deleted, true);
+
+  const restoreResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_restore_excalidraw_fallback",
+          type: "restore_entry",
+          entryId: drawingEntry.id,
+          preconditions: {
+            entryVersion: deletedEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+
+  assert.equal(restoreResponse.statusCode, 200);
+  const restoredEntry = restoreResponse.json().results[0].entry;
+  assert.equal(restoredEntry.deleted, false);
+  assert.equal(restoredEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(restoredEntry.kind, "excalidraw");
+  assert.equal(restoredEntry.blob.hash, hash);
+
+  const treeResponse = await app.inject({
+    method: "GET",
+    url: `/v1/workspaces/${roomId}/tree`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(treeResponse.statusCode, 200);
+  const treeEntry = treeResponse
+    .json()
+    .entries.find((entry: { id: string }) => entry.id === drawingEntry.id);
+  assert.ok(treeEntry);
+  assert.equal(treeEntry.kind, "excalidraw");
+  assert.equal(treeEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(treeEntry.deleted, false);
+  assert.equal(treeEntry.blob.hash, hash);
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("excalidraw drawing live sync supports lease, control requests, pointer broadcast, and reconnect snapshot", async () => {
+  const env = createTestEnv({
+    drawingSnapshotStoreDebounceMs: 50,
+    drawingPointerStaleMs: 5_000
+  });
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "writer2",
+    password: "secret",
+    displayName: "Writer Two",
+    globalRole: "writer"
+  });
+
+  const writerOne = await loginAs(app, "writer1", "secret", "writer-one-device");
+  const writerTwo = await loginAs(app, "writer2", "secret", "writer-two-device");
+
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    },
+    payload: {
+      name: "Live Excalidraw Room"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const inviteResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    }
+  });
+
+  assert.equal(inviteResponse.statusCode, 200);
+
+  const joinResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${writerTwo.accessToken}`
+    },
+    payload: {
+      code: inviteResponse.json().invite.code
+    }
+  });
+
+  assert.equal(joinResponse.statusCode, 200);
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-one-device",
+      operations: [
+        {
+          opId: "op_create_live_excalidraw",
+          type: "create_excalidraw",
+          path: "Boards/Realtime.excalidraw.md"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const drawingEntry = createEntryResponse.json().results[0].entry;
+
+  const acquireLeaseResponse = await app.inject({
+    method: "POST",
+    url: `/v1/drawings/${drawingEntry.id}/lease/acquire`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    }
+  });
+
+  assert.equal(acquireLeaseResponse.statusCode, 200);
+  assert.equal(acquireLeaseResponse.json().lease.editor.username, "writer1");
+
+  await app.listen({
+    host: "127.0.0.1",
+    port: 0
+  });
+
+  const address = app.server.address();
+  assert.ok(address && typeof address === "object");
+
+  const drawingTokenOne = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/drawing-token`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    }
+  });
+  const drawingTokenTwo = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/drawing-token`,
+    headers: {
+      authorization: `Bearer ${writerTwo.accessToken}`
+    }
+  });
+
+  assert.equal(drawingTokenOne.statusCode, 200);
+  assert.equal(drawingTokenTwo.statusCode, 200);
+
+  const drawingWsBaseUrl = `ws://127.0.0.1:${address.port}/v1/drawings`;
+  const editorStream = await openJsonWebSocketStream(
+    `${drawingWsBaseUrl}?token=${drawingTokenOne.json().token}`
+  );
+  const viewerStream = await openJsonWebSocketStream(
+    `${drawingWsBaseUrl}?token=${drawingTokenTwo.json().token}`
+  );
+
+  const editorReady = await waitForWsMessageType(editorStream, "drawing.ready");
+  const viewerReady = await waitForWsMessageType(viewerStream, "drawing.ready");
+  assert.equal(editorReady.lease && (editorReady.lease as { editor: { username: string } }).editor.username, "writer1");
+  assert.equal(viewerReady.sceneSnapshot, null);
+
+  viewerStream.socket.send(
+    JSON.stringify({
+      type: "scene.publish",
+      scene: {
+        elements: []
+      }
+    })
+  );
+
+  const viewerError = await waitForWsMessageType(viewerStream, "error");
+  assert.equal(viewerError.code, "not_current_editor");
+
+  editorStream.socket.send(
+    JSON.stringify({
+      type: "scene.publish",
+      scene: {
+        elements: [{ id: "line-1", type: "line" }],
+        appState: {
+          viewModeEnabled: false
+        }
+      }
+    })
+  );
+
+  const sceneUpdated = await waitForWsMessageType(viewerStream, "scene.updated");
+  assert.equal(
+    (sceneUpdated.snapshot as { revision: number }).revision,
+    1
+  );
+
+  editorStream.socket.send(
+    JSON.stringify({
+      type: "pointer.publish",
+      pointer: {
+        x: 10,
+        y: 20,
+        color: "#ff0000"
+      }
+    })
+  );
+
+  const pointerUpdated = await waitForWsMessageType(viewerStream, "pointer.updated");
+  assert.equal((pointerUpdated.pointer as { x: number }).x, 10);
+  assert.equal((pointerUpdated.pointer as { y: number }).y, 20);
+  assert.equal((pointerUpdated.pointer as { color: string }).color, "#ff0000");
+
+  const controlRequestResponse = await app.inject({
+    method: "POST",
+    url: `/v1/drawings/${drawingEntry.id}/control-requests`,
+    headers: {
+      authorization: `Bearer ${writerTwo.accessToken}`
+    }
+  });
+
+  assert.equal(controlRequestResponse.statusCode, 201);
+  const requestId = controlRequestResponse.json().request.requestId;
+  const controlRequested = await waitForWsMessageType(editorStream, "control.requested");
+  assert.equal((controlRequested.request as { requestId: string }).requestId, requestId);
+
+  const approveResponse = await app.inject({
+    method: "POST",
+    url: `/v1/drawings/${drawingEntry.id}/control-requests/${requestId}/approve`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    }
+  });
+
+  assert.equal(approveResponse.statusCode, 200);
+  assert.equal(approveResponse.json().status, "approved");
+  assert.equal(approveResponse.json().lease.editor.username, "writer2");
+
+  const controlResolved = await waitForWsMessageType(viewerStream, "control.resolved");
+  assert.equal(controlResolved.status, "approved");
+  const leaseUpdated = await waitForWsMessageType(viewerStream, "lease.updated");
+  assert.equal(
+    (leaseUpdated.lease as { editor: { username: string } }).editor.username,
+    "writer2"
+  );
+  const pointerCleared = await waitForWsMessageType(viewerStream, "pointer.cleared");
+  assert.equal(pointerCleared.reason, "takeover");
+
+  editorStream.socket.send(
+    JSON.stringify({
+      type: "scene.publish",
+      scene: {
+        elements: [{ id: "line-2", type: "line" }]
+      }
+    })
+  );
+
+  const oldEditorError = await waitForWsMessageType(editorStream, "error");
+  assert.equal(oldEditorError.code, "not_current_editor");
+
+  viewerStream.socket.send(
+    JSON.stringify({
+      type: "scene.publish",
+      scene: {
+        elements: [{ id: "line-2", type: "line" }]
+      }
+    })
+  );
+
+  const secondSceneUpdated = await waitForWsMessageType(editorStream, "scene.updated");
+  assert.equal(
+    (secondSceneUpdated.snapshot as { revision: number }).revision,
+    2
+  );
+
+  const releaseResponse = await app.inject({
+    method: "POST",
+    url: `/v1/drawings/${drawingEntry.id}/lease/release`,
+    headers: {
+      authorization: `Bearer ${writerTwo.accessToken}`
+    }
+  });
+
+  assert.equal(releaseResponse.statusCode, 200);
+  await sleep(150);
+
+  const reconnectToken = await app.inject({
+    method: "POST",
+    url: `/v1/files/${drawingEntry.id}/drawing-token`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    }
+  });
+
+  assert.equal(reconnectToken.statusCode, 200);
+  const reconnectStream = await openJsonWebSocketStream(
+    `${drawingWsBaseUrl}?token=${reconnectToken.json().token}`
+  );
+  const reconnectReady = await waitForWsMessageType(reconnectStream, "drawing.ready");
+  assert.equal((reconnectReady.sceneSnapshot as { revision: number }).revision, 2);
+  assert.equal(reconnectReady.lease, null);
+
+  reconnectStream.socket.close();
+  editorStream.socket.close();
+  viewerStream.socket.close();
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("excalidraw editor lease expires after missed heartbeat", async () => {
+  const env = createTestEnv({
+    drawingLeaseTtlSeconds: 1
+  });
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "writer2",
+    password: "secret",
+    displayName: "Writer Two",
+    globalRole: "writer"
+  });
+
+  const writerOne = await loginAs(app, "writer1", "secret", "writer-one-device");
+  const writerTwo = await loginAs(app, "writer2", "secret", "writer-two-device");
+
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    },
+    payload: {
+      name: "Lease Expiry Room"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const inviteResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    }
+  });
+  assert.equal(inviteResponse.statusCode, 200);
+
+  const joinResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${writerTwo.accessToken}`
+    },
+    payload: {
+      code: inviteResponse.json().invite.code
+    }
+  });
+  assert.equal(joinResponse.statusCode, 200);
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-one-device",
+      operations: [
+        {
+          opId: "op_create_expiring_excalidraw",
+          type: "create_excalidraw",
+          path: "Boards/Expiry.excalidraw.md"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const drawingEntry = createEntryResponse.json().results[0].entry;
+
+  const acquireByWriterOne = await app.inject({
+    method: "POST",
+    url: `/v1/drawings/${drawingEntry.id}/lease/acquire`,
+    headers: {
+      authorization: `Bearer ${writerOne.accessToken}`
+    }
+  });
+
+  assert.equal(acquireByWriterOne.statusCode, 200);
+  await sleep(2_200);
+
+  const acquireByWriterTwo = await app.inject({
+    method: "POST",
+    url: `/v1/drawings/${drawingEntry.id}/lease/acquire`,
+    headers: {
+      authorization: `Bearer ${writerTwo.accessToken}`
+    }
+  });
+
+  assert.equal(acquireByWriterTwo.statusCode, 200);
+  assert.equal(acquireByWriterTwo.json().lease.editor.username, "writer2");
 
   await app.close();
   await cleanupTestEnv(env);

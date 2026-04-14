@@ -4,3 +4,5 @@ dist/
 .env.*
 coverage/
 .rolay-data/
+.rolay-data-test/
+full-test-output.txt

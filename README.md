@@ -1,7 +1,7 @@
 # Rolay Server
 
 Backend for self-hosted Obsidian collaboration with realtime markdown editing,
-room tree sync, and blob-based attachment storage.
+single-editor Excalidraw live sessions, room tree sync, and blob-based attachment storage.
 
 New agent start here:
 
@@ -38,12 +38,20 @@ New agent start here:
 - live markdown bootstrap: `POST /v1/workspaces/:workspaceId/markdown/bootstrap`
   (supports metadata-only mode via `includeState=false`)
 - live file endpoints: `POST /v1/files/:entryId/crdt-token`
+- live file endpoints: `POST /v1/files/:entryId/drawing-token`
 - live file endpoints: `POST /v1/files/:entryId/blob/upload-ticket`
 - live file endpoints: `PUT /v1/files/:entryId/blob/uploads/:uploadId/content`
 - live file endpoints: `GET /v1/files/:entryId/blob/content`
 - live file endpoints: `POST /v1/files/:entryId/blob/download-ticket`
 - live file endpoints: `DELETE /v1/files/:entryId/blob/uploads/:uploadId`
 - live CRDT runtime: `Yjs` + `Hocuspocus` websocket server on `/v1/crdt`
+- live drawing endpoints:
+  `POST /v1/drawings/:entryId/lease/acquire`,
+  `POST /v1/drawings/:entryId/lease/release`,
+  `POST /v1/drawings/:entryId/control-requests`,
+  `POST /v1/drawings/:entryId/control-requests/:requestId/approve`,
+  `POST /v1/drawings/:entryId/control-requests/:requestId/deny`
+- live drawing runtime: single-editor websocket server on `/v1/drawings`
 - persistent document storage drivers: `local`, `minio`
 - persistent server state drivers: `memory`, `postgres`
 
@@ -53,11 +61,14 @@ New agent start here:
 - room membership roles are `owner`, `member`
 - realtime CRDT is used only for markdown content
 - room-level note presence is aggregated from markdown awareness and exposed through a separate SSE stream
+- Excalidraw drawings use first-class `kind="excalidraw"` entries with blob persistence plus
+  single-editor live scene broadcast
 - room tree state is server-authoritative, not CRDT-based
 - binary files are synced as blob objects addressed by `sha256`
 - server accepts `sha256` digests in hex or base64 form and normalizes them to canonical base64 in API responses and persisted state
 - binary uploads are staged and streamed through the server before `commit_blob_revision`
 - binary uploads are resumable by byte offset and return `uploadedBytes` on resumed tickets
+- drawing live scene snapshots are stored separately from room state snapshots and do not use CRDT
 - desktop clients can upload blob bytes through an authenticated API endpoint instead of relying only on raw ticket URLs
 - binary downloads support authenticated HTTP `Range` requests with `206 Partial Content`
 - binary progress can be driven by `uploadedBytes`, `sizeBytes`, `Content-Length`, and `Content-Range`
