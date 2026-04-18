@@ -42,7 +42,7 @@ The server has four different synchronization layers:
    - single current editor per drawing
    - live scene snapshot broadcast to viewers
    - editor pointer presence
-   - persistent `.excalidraw.md` file remains blob-backed storage/fallback
+   - persistent serialized Markdown file remains blob-backed storage/fallback
 
 These layers are intentionally separate. Only Markdown content uses CRDT.
 
@@ -147,7 +147,7 @@ Excalidraw entries have:
 
 - `kind = "excalidraw"`
 - `contentMode = "blob"`
-- optional persistent `blob` revision for the serialized `.excalidraw.md` file
+- optional persistent `blob` revision for the serialized Markdown drawing file
 
 Live drawing collaboration is intentionally not multi-writer. The server keeps:
 
@@ -157,8 +157,12 @@ Live drawing collaboration is intentionally not multi-writer. The server keeps:
 - the latest fresh editor pointer
 
 Persistent file sync for the serialized drawing still uses the normal blob flow. Live scene state is
-stored separately for reconnect/viewer hydration and does not parse or merge the `.excalidraw.md`
+stored separately for reconnect/viewer hydration and does not parse or merge the serialized drawing
 file on the server.
+
+The server does not infer Excalidraw from filename suffix. Source of truth is the entry kind in the
+tree. `create_excalidraw` creates `kind="excalidraw"` even for ordinary Markdown paths such as
+`diagram.md`, and later rename/move operations do not degrade that kind.
 
 ## Why the Tree Is Server-Authoritative
 

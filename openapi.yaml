@@ -1607,6 +1607,9 @@ paths:
         kind:
           type: string
           enum: [folder, markdown, binary, excalidraw]
+          description: >
+            `excalidraw` is determined by entry kind, not by requiring any specific filename
+            suffix such as `*.excalidraw.md`.
         contentMode:
           type: string
           enum: [none, crdt, blob]
@@ -1667,6 +1670,9 @@ paths:
             - delete_entry
             - restore_entry
             - commit_blob_revision
+          description: >
+            `create_excalidraw` creates an `excalidraw` entry regardless of path suffix.
+            Later rename/move operations do not degrade that kind based on filename changes.
         path:
           type: string
         entryId:

@@ -494,15 +494,6 @@ export class WorkspaceService {
       throw new AppError(400, "invalid_operation", "Create operation requires path.");
     }
 
-    const path = normalizePath(operation.path);
-    if (!path.endsWith(".excalidraw.md")) {
-      return {
-        opId: operation.opId,
-        status: "rejected",
-        reason: "invalid_excalidraw_path"
-      };
-    }
-
     return this.createEntry(workspace, operation, "excalidraw", "blob");
   }
 
@@ -540,13 +531,6 @@ export class WorkspaceService {
         opId: operation.opId,
         status: "applied",
         entry: cloneValue(entry)
-      };
-    }
-    if (entry.kind === "excalidraw" && !newPath.endsWith(".excalidraw.md")) {
-      return {
-        opId: operation.opId,
-        status: "rejected",
-        reason: "invalid_excalidraw_path"
       };
     }
     if (entry.kind === "folder" && newPath.startsWith(`${entry.path}/`)) {

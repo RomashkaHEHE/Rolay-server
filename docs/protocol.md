@@ -331,7 +331,8 @@ Important behavior:
 - operations are idempotent by `opId`
 - conflicts use `preconditions`
 - path collisions can return `suggestedPath`
-- `create_excalidraw` requires a path ending in `.excalidraw.md`
+- `create_excalidraw` sets `kind="excalidraw"` regardless of filename suffix
+- rename/move do not downgrade `kind="excalidraw"` when the path changes
 - serialized Excalidraw file content still uses blob upload plus `commit_blob_revision`
 
 ## Excalidraw Live Sessions
@@ -345,6 +346,7 @@ Rules:
 - entry must be `kind="excalidraw"`
 - caller must be a room member
 - token is short-lived and used only for `/v1/drawings`
+- path suffix is irrelevant once entry kind is `excalidraw`
 
 ### Lease and control
 
@@ -391,7 +393,7 @@ Important behavior:
 - only the current editor connection may publish scene or pointer updates
 - pointer uses scene-space coordinates
 - latest scene snapshot is stored separately for reconnect hydration
-- the serialized `.excalidraw.md` file remains the blob-backed persistent file and fallback layer
+- serialized drawing content remains the blob-backed persistent file and fallback layer
 
 ## Markdown Bootstrap And Live CRDT
 

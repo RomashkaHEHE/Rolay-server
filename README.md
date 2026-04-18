@@ -63,6 +63,8 @@ New agent start here:
 - room-level note presence is aggregated from markdown awareness and exposed through a separate SSE stream
 - Excalidraw drawings use first-class `kind="excalidraw"` entries with blob persistence plus
   single-editor live scene broadcast
+- Excalidraw classification is driven by entry kind and client intent, not by requiring a
+  `*.excalidraw.md` suffix in the path
 - room tree state is server-authoritative, not CRDT-based
 - binary files are synced as blob objects addressed by `sha256`
 - server accepts `sha256` digests in hex or base64 form and normalizes them to canonical base64 in API responses and persisted state

@@ -2968,7 +2968,7 @@ test("excalidraw entries use blob persistence and reject markdown-only endpoints
         {
           opId: "op_create_excalidraw",
           type: "create_excalidraw",
-          path: "Boards/Linear-Algebra.excalidraw.md"
+          path: "Boards/Linear-Algebra.md"
         }
       ]
     }
@@ -3208,7 +3208,7 @@ test("excalidraw entries support blob-only fallback flow without drawing websock
           opId: "op_rename_excalidraw_fallback",
           type: "rename_entry",
           entryId: drawingEntry.id,
-          newPath: "Boards/Session-1-renamed.excalidraw.md",
+          newPath: "Boards/Session-1-renamed.md",
           preconditions: {
             entryVersion: committedEntry.entryVersion
           }
@@ -3219,7 +3219,7 @@ test("excalidraw entries support blob-only fallback flow without drawing websock
 
   assert.equal(renameResponse.statusCode, 200);
   const renamedEntry = renameResponse.json().results[0].entry;
-  assert.equal(renamedEntry.path, "Boards/Session-1-renamed.excalidraw.md");
+  assert.equal(renamedEntry.path, "Boards/Session-1-renamed.md");
   assert.equal(renamedEntry.kind, "excalidraw");
   assert.equal(renamedEntry.blob.hash, hash);
 
@@ -3236,7 +3236,7 @@ test("excalidraw entries support blob-only fallback flow without drawing websock
           opId: "op_move_excalidraw_fallback",
           type: "move_entry",
           entryId: drawingEntry.id,
-          newPath: "Archive/Session-1-renamed.excalidraw.md",
+          newPath: "Archive/Session-1-renamed.md",
           preconditions: {
             entryVersion: renamedEntry.entryVersion
           }
@@ -3247,7 +3247,7 @@ test("excalidraw entries support blob-only fallback flow without drawing websock
 
   assert.equal(moveResponse.statusCode, 200);
   const movedEntry = moveResponse.json().results[0].entry;
-  assert.equal(movedEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(movedEntry.path, "Archive/Session-1-renamed.md");
   assert.equal(movedEntry.kind, "excalidraw");
   assert.equal(movedEntry.blob.hash, hash);
 
@@ -3321,7 +3321,7 @@ test("excalidraw entries support blob-only fallback flow without drawing websock
   assert.equal(restoreResponse.statusCode, 200);
   const restoredEntry = restoreResponse.json().results[0].entry;
   assert.equal(restoredEntry.deleted, false);
-  assert.equal(restoredEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(restoredEntry.path, "Archive/Session-1-renamed.md");
   assert.equal(restoredEntry.kind, "excalidraw");
   assert.equal(restoredEntry.blob.hash, hash);
 
@@ -3339,7 +3339,7 @@ test("excalidraw entries support blob-only fallback flow without drawing websock
     .entries.find((entry: { id: string }) => entry.id === drawingEntry.id);
   assert.ok(treeEntry);
   assert.equal(treeEntry.kind, "excalidraw");
-  assert.equal(treeEntry.path, "Archive/Session-1-renamed.excalidraw.md");
+  assert.equal(treeEntry.path, "Archive/Session-1-renamed.md");
   assert.equal(treeEntry.deleted, false);
   assert.equal(treeEntry.blob.hash, hash);
 
@@ -3422,7 +3422,7 @@ test("excalidraw drawing live sync supports lease, control requests, pointer bro
         {
           opId: "op_create_live_excalidraw",
           type: "create_excalidraw",
-          path: "Boards/Realtime.excalidraw.md"
+          path: "Boards/Realtime.md"
         }
       ]
     }
@@ -3695,7 +3695,7 @@ test("excalidraw editor lease expires after missed heartbeat", async () => {
         {
           opId: "op_create_expiring_excalidraw",
           type: "create_excalidraw",
-          path: "Boards/Expiry.excalidraw.md"
+          path: "Boards/Expiry.md"
         }
       ]
     }
