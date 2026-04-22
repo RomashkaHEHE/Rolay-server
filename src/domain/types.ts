@@ -194,6 +194,19 @@ export interface BlobDownloadTicketRecord {
   expiresAt: string;
 }
 
+export interface NoteContentVersionRecord {
+  workspaceId: string;
+  entryId: string;
+  contentVersion: number;
+}
+
+export interface NoteReadStateRecord {
+  workspaceId: string;
+  entryId: string;
+  userId: string;
+  lastReadContentVersion: number;
+}
+
 export interface NotePresenceViewer {
   presenceId: string;
   userId: string;
@@ -216,6 +229,26 @@ export interface NotePresenceUpdate {
   workspaceId: string;
   entryId: string;
   viewers: NotePresenceViewer[];
+}
+
+export interface NoteReadStateNoteSnapshot {
+  entryId: string;
+  contentVersion: number;
+  lastReadContentVersion: number;
+  unread: boolean;
+}
+
+export interface NoteReadStateSnapshot {
+  workspaceId: string;
+  notes: NoteReadStateNoteSnapshot[];
+}
+
+export interface NoteReadStateUpdate {
+  workspaceId: string;
+  entryId: string;
+  contentVersion: number;
+  lastReadContentVersion: number;
+  unread: boolean;
 }
 
 export interface DrawingParticipant {

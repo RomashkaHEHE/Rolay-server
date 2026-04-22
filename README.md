@@ -35,6 +35,11 @@ New agent start here:
 - live note presence stream:
   `GET /v1/workspaces/:workspaceId/note-presence/events`
   (SSE snapshot + live note updates)
+- live note read-state stream:
+  `GET /v1/workspaces/:workspaceId/note-read-state/events`
+  (SSE snapshot + live unread/read updates for markdown notes)
+- live note read mutation:
+  `POST /v1/workspaces/:workspaceId/notes/:entryId/read`
 - live markdown bootstrap: `POST /v1/workspaces/:workspaceId/markdown/bootstrap`
   (supports metadata-only mode via `includeState=false`)
 - live file endpoints: `POST /v1/files/:entryId/crdt-token`
@@ -61,6 +66,7 @@ New agent start here:
 - room membership roles are `owner`, `member`
 - realtime CRDT is used only for markdown content
 - room-level note presence is aggregated from markdown awareness and exposed through a separate SSE stream
+- room-level note read state is persisted per account and exposed through its own SSE stream
 - Excalidraw drawings use first-class `kind="excalidraw"` entries with blob persistence plus
   single-editor live scene broadcast
 - room tree state is server-authoritative, not CRDT-based

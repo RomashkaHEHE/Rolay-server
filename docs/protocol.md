@@ -24,7 +24,7 @@ In practice:
 The protocol uses:
 
 - REST JSON for auth, room management, tree mutations, bootstrap, and blob tickets
-- SSE for room events, note presence, and settings/admin events
+- SSE for room events, note presence, note read state, and settings/admin events
 - `Yjs` WebSocket for live Markdown collaboration
 - drawing WebSocket for live Excalidraw single-editor sessions
 
@@ -253,6 +253,95 @@ Example per-note update payload:
       "hasSelection": false
     }
   ]
+}
+```
+
+## Note Read-State SSE
+
+- `GET /v1/workspaces/{workspaceId}/note-read-state/events`
+
+Purpose:
+
+- per-account unread/read state for Markdown notes
+- explorer dots or other "unread remote changes" UI
+- cross-device persisted read state for the same account
+
+Behavior:
+
+- any current room member can subscribe
+- every new stream starts with `read-state.snapshot`
+- later updates arrive as `note.read-state.updated`
+- `ping` keepalive is sent periodically
+- no durable resume cursor is used for this stream
+
+Read-state rules:
+
+- source of truth is persisted server state, not raw awareness payloads
+- only Markdown notes participate
+- every note has its own `contentVersion`
+- every account has its own `lastReadContentVersion`
+- `unread = contentVersion > lastReadContentVersion`
+- if any live viewer presence for an account is currently in the note, new persisted Markdown changes
+  automatically advance that account's `lastReadContentVersion`
+- the same account on two devices still shares one unread owner because read state is per account,
+  not per device
+
+### Mark note read
+
+- `POST /v1/workspaces/{workspaceId}/notes/{entryId}/read`
+
+Request:
+
+- `contentVersion`
+
+Response:
+
+- `workspaceId`
+- `entryId`
+- `contentVersion`
+- `lastReadContentVersion`
+- `unread`
+
+Rules:
+
+- only Markdown notes are supported
+- the mutation is idempotent for the same or older `contentVersion`
+- the server clamps requested `contentVersion` to the current note `contentVersion`
+- after a successful read-state change, the server emits `note.read-state.updated` to all active
+  sessions of that same account in the room
+
+Important nuance:
+
+- the server advances `contentVersion` when a changed Markdown `Yjs` document is durably stored
+- this means the contract follows persisted CRDT state, not every individual keystroke
+- if multiple edits are coalesced into one stored Yjs update by debounce, they advance unread state
+  once, which keeps cross-device semantics stable
+
+Example snapshot payload:
+
+```json
+{
+  "workspaceId": "ws_1",
+  "notes": [
+    {
+      "entryId": "fil_123",
+      "contentVersion": 18,
+      "lastReadContentVersion": 12,
+      "unread": true
+    }
+  ]
+}
+```
+
+Example per-note update payload:
+
+```json
+{
+  "workspaceId": "ws_1",
+  "entryId": "fil_123",
+  "contentVersion": 19,
+  "lastReadContentVersion": 19,
+  "unread": false
 }
 ```
 

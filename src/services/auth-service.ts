@@ -393,6 +393,13 @@ export class AuthService {
         this.state.blobDownloadTickets.delete(ticketId);
       }
     }
+
+    for (const key of [...this.state.noteReadStates.keys()]) {
+      const record = this.state.noteReadStates.get(key);
+      if (record?.userId === userId) {
+        this.state.noteReadStates.delete(key);
+      }
+    }
   }
 
   private removeUserFromWorkspaces(userId: string): void {
@@ -456,6 +463,18 @@ export class AuthService {
     for (const [ticketId, record] of this.state.blobDownloadTickets.entries()) {
       if (record.workspaceId === workspaceId) {
         this.state.blobDownloadTickets.delete(ticketId);
+      }
+    }
+
+    for (const [key, record] of this.state.noteContentVersions.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.noteContentVersions.delete(key);
+      }
+    }
+
+    for (const [key, record] of this.state.noteReadStates.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.noteReadStates.delete(key);
       }
     }
   }

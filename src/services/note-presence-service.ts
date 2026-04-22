@@ -105,6 +105,11 @@ export class NotePresenceService {
     this.replaceViewers(documentContext.workspaceId, documentContext.entryId, []);
   }
 
+  hasActiveViewer(workspaceId: string, entryId: string, userId: string): boolean {
+    const viewers = this.workspaceNotes.get(workspaceId)?.get(entryId) ?? [];
+    return viewers.some((viewer) => viewer.userId === userId);
+  }
+
   private getSnapshot(workspaceId: string): NotePresenceSnapshot {
     const workspace = this.requireWorkspace(workspaceId);
     const notes = [...(this.workspaceNotes.get(workspaceId)?.entries() ?? [])]

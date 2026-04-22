@@ -90,6 +90,10 @@ Each route module is intentionally thin. If you need actual behavior, jump from 
   - room note-presence SSE stream
   - initial snapshot plus live per-note presence updates
 
+- `src/modules/note-read-state/note-read-state.routes.ts`
+  - room note read-state SSE stream
+  - markdown note mark-read mutation
+
 - `src/modules/invites/invites.routes.ts`
   - join room by invite code
   - get/toggle/regenerate invite
@@ -155,6 +159,12 @@ Most business logic lives here.
   - viewer snapshot/update fanout
   - duplicate-presence handling for multi-device users
 
+- `src/services/note-read-state-service.ts`
+  - per-account Markdown unread/read-state snapshots
+  - note `contentVersion` tracking
+  - mark-read mutation behavior
+  - live per-account update fanout
+
 - `src/services/drawing-service.ts`
   - Excalidraw drawing tokens
   - single-editor lease state
@@ -206,6 +216,14 @@ This matters a lot.
 - scope: one room
 - payloads: `presence.snapshot`, `note.presence.updated`
 
+### Note Read-State SSE
+
+- implementation: `src/modules/note-read-state/note-read-state.routes.ts`
+- state source: `src/services/note-read-state-service.ts`
+- upstream source of truth: persisted Markdown state transitions from `src/services/realtime-service.ts`
+- scope: one room, per subscribed account
+- payloads: `read-state.snapshot`, `note.read-state.updated`
+
 Do not confuse them.
 
 ## Markdown Vs Binary
@@ -252,6 +270,7 @@ This file is long, but it is the best executable overview of what the server cur
 - upload cancellation
 - CRDT websocket sync
 - note presence SSE
+- note read-state SSE
 - markdown bootstrap
 
 If you are unsure whether a behavior is intentional, search this file first.

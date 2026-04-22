@@ -38,11 +38,15 @@ The server has four different synchronization layers:
    - Markdown: realtime `Yjs` / `Hocuspocus`
    - non-Markdown files: blob-based whole-file sync
 
-4. Excalidraw live sessions
-   - single current editor per drawing
-   - live scene snapshot broadcast to viewers
-   - editor pointer presence
-   - persistent `.excalidraw.md` file remains blob-backed storage/fallback
+4. Markdown note presence and read state
+   - note presence is live and awareness-derived
+   - note read state is persisted per account and driven by stored Markdown content versions
+
+ 5. Excalidraw live sessions
+    - single current editor per drawing
+    - live scene snapshot broadcast to viewers
+    - editor pointer presence
+    - persistent `.excalidraw.md` file remains blob-backed storage/fallback
 
 These layers are intentionally separate. Only Markdown content uses CRDT.
 
@@ -97,11 +101,15 @@ The server uses five transports:
    - `GET /v1/workspaces/{workspaceId}/note-presence/events`
    - used for room-wide live note viewer state aggregated from Markdown awareness
 
-5. CRDT WebSocket
+5. Note read-state SSE
+   - `GET /v1/workspaces/{workspaceId}/note-read-state/events`
+   - used for room-wide persisted unread/read state for Markdown notes
+
+6. CRDT WebSocket
    - `/v1/crdt`
    - used only for live Markdown collaboration
 
-5. Drawing WebSocket
+7. Drawing WebSocket
    - `/v1/drawings`
    - used only for live Excalidraw single-editor sessions
 
@@ -121,6 +129,7 @@ Flow:
 - client connects to `Hocuspocus`
 - server loads/stores the `Yjs` document from persistent storage
 - server also aggregates awareness into room-level note presence
+- server also advances per-note read-state `contentVersion` when changed Markdown state is stored
 
 ### Non-Markdown files
 

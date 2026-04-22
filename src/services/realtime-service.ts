@@ -16,6 +16,7 @@ import { AppEnv } from "../config/env";
 import { FileEntry, Membership } from "../domain/types";
 import { MemoryState, StoredWorkspace } from "./memory-state";
 import { NotePresenceService } from "./note-presence-service";
+import { NoteReadStateService } from "./note-read-state-service";
 import { StorageService } from "./storage-service";
 
 interface RealtimeContext {
@@ -46,6 +47,7 @@ export class RealtimeService {
     private readonly state: MemoryState,
     private readonly storage: StorageService,
     private readonly notePresence: NotePresenceService,
+    private readonly noteReadState: NoteReadStateService,
     private readonly env: AppEnv,
     private readonly logger: FastifyBaseLogger
   ) {
@@ -160,8 +162,27 @@ export class RealtimeService {
   }
 
   private async storeDocument(documentName: string, document: Y.Doc): Promise<void> {
-    const state = Y.encodeStateAsUpdate(document);
-    await this.storage.storeDocument(documentName, state);
+    const nextState = Y.encodeStateAsUpdate(document);
+    const previousState = await this.storage.loadDocument(documentName);
+    if (
+      previousState &&
+      Buffer.from(previousState).equals(Buffer.from(nextState))
+    ) {
+      return;
+    }
+
+    await this.storage.storeDocument(documentName, nextState);
+    const context = this.findDocumentContext(documentName);
+    if (!context) {
+      return;
+    }
+
+    // Unread/read-state is tied to the durable document state that was just stored. This keeps the
+    // contract stable across reconnects and devices instead of trying to count transient editor ops.
+    await this.noteReadState.handleMarkdownContentChanged(
+      context.workspaceId,
+      context.entryId
+    );
   }
 
   private handleAwarenessUpdate(payload: onAwarenessUpdatePayload): void {
@@ -216,5 +237,29 @@ export class RealtimeService {
       membership,
       entry
     };
+  }
+
+  private findDocumentContext(
+    documentName: string
+  ): {
+    workspaceId: string;
+    entryId: string;
+  } | null {
+    for (const workspace of this.state.workspaces.values()) {
+      for (const entry of workspace.entries.values()) {
+        if (
+          entry.docId === documentName &&
+          entry.kind === "markdown" &&
+          !entry.deleted
+        ) {
+          return {
+            workspaceId: workspace.workspace.id,
+            entryId: entry.id
+          };
+        }
+      }
+    }
+
+    return null;
   }
 }

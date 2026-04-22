@@ -484,6 +484,90 @@ paths:
                   data: {"workspaceId":"ws_01","notes":[]}
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+          '403':
+            $ref: '#/components/responses/ErrorForbidden'
+          '404':
+            $ref: '#/components/responses/ErrorNotFound'
+  /v1/rooms/{workspaceId}/note-read-state/events:
+    get:
+      tags: [presence]
+      summary: Subscribe to room markdown read-state updates
+      operationId: streamRoomNoteReadState
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Server-sent event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: read-state.snapshot
+                  data: {"workspaceId":"ws_01","notes":[{"entryId":"fil_01","contentVersion":4,"lastReadContentVersion":2,"unread":true}]}
+                  
+                  event: note.read-state.updated
+                  data: {"workspaceId":"ws_01","entryId":"fil_01","contentVersion":5,"lastReadContentVersion":5,"unread":false}
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/note-read-state/events:
+    get:
+      tags: [presence]
+      summary: Subscribe to room markdown read-state updates (workspace alias)
+      operationId: streamWorkspaceNoteReadState
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Server-sent event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  event: read-state.snapshot
+                  data: {"workspaceId":"ws_01","notes":[]}
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/notes/{entryId}/read:
+    post:
+      tags: [presence]
+      summary: Mark a markdown note as read for the current account
+      operationId: markNoteRead
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/EntryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkNoteReadRequest'
+      responses:
+        '200':
+          description: Updated read state for the caller account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoteReadStateUpdate'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbidden'
         '404':
@@ -1538,10 +1622,61 @@ paths:
           type: string
         entryId:
           type: string
-        viewers:
+          viewers:
+            type: array
+            items:
+              $ref: '#/components/schemas/NotePresenceViewer'
+    NoteReadStateNote:
+      type: object
+      additionalProperties: false
+      required: [entryId, contentVersion, lastReadContentVersion, unread]
+      properties:
+        entryId:
+          type: string
+        contentVersion:
+          type: integer
+          minimum: 0
+        lastReadContentVersion:
+          type: integer
+          minimum: 0
+        unread:
+          type: boolean
+    NoteReadStateSnapshot:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, notes]
+      properties:
+        workspaceId:
+          type: string
+        notes:
           type: array
           items:
-            $ref: '#/components/schemas/NotePresenceViewer'
+            $ref: '#/components/schemas/NoteReadStateNote'
+    NoteReadStateUpdate:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, entryId, contentVersion, lastReadContentVersion, unread]
+      properties:
+        workspaceId:
+          type: string
+        entryId:
+          type: string
+        contentVersion:
+          type: integer
+          minimum: 0
+        lastReadContentVersion:
+          type: integer
+          minimum: 0
+        unread:
+          type: boolean
+    MarkNoteReadRequest:
+      type: object
+      additionalProperties: false
+      required: [contentVersion]
+      properties:
+        contentVersion:
+          type: integer
+          minimum: 0
     Membership:
       type: object
       additionalProperties: false

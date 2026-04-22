@@ -1031,6 +1031,18 @@ export class WorkspaceService {
         this.state.blobDownloadTickets.delete(ticketId);
       }
     }
+
+    for (const [key, record] of this.state.noteContentVersions.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.noteContentVersions.delete(key);
+      }
+    }
+
+    for (const [key, record] of this.state.noteReadStates.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.noteReadStates.delete(key);
+      }
+    }
   }
 
   private toInviteView(workspaceId: string, invite: WorkspaceInvite): WorkspaceInviteView {

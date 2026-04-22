@@ -10,7 +10,7 @@ import * as Y from "yjs";
 import { buildApp } from "../src/app";
 import { AppEnv } from "../src/config/env";
 import { AuthService } from "../src/services/auth-service";
-import { MemoryState } from "../src/services/memory-state";
+import { MemoryState, noteReadStateKey } from "../src/services/memory-state";
 import { SettingsEventsService } from "../src/services/settings-events-service";
 import WebSocket from "ws";
 
@@ -2746,6 +2746,370 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   assert.deepEqual(afterSecondDisconnect.payload.viewers, []);
 
   await presenceStream.reader.cancel();
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("room note read state SSE tracks unread markdown state per account", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader1",
+    password: "secret",
+    displayName: "Reader One",
+    globalRole: "reader"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader2",
+    password: "secret",
+    displayName: "Reader Two",
+    globalRole: "reader"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const readerOneSession = await loginAs(app, "reader1", "secret", "reader-one-laptop");
+  const readerTwoSession = await loginAs(app, "reader2", "secret", "reader-two-laptop");
+  const writerUser = writerSession.user as { id: string; displayName: string };
+  const readerOneUser = readerOneSession.user as { id: string; displayName: string };
+
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Read State Notes"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const inviteResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+
+  assert.equal(inviteResponse.statusCode, 200);
+  const inviteCode = inviteResponse.json().invite.code;
+
+  const joinReaderOne = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${readerOneSession.accessToken}`
+    },
+    payload: {
+      code: inviteCode
+    }
+  });
+  const joinReaderTwo = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${readerTwoSession.accessToken}`
+    },
+    payload: {
+      code: inviteCode
+    }
+  });
+
+  assert.equal(joinReaderOne.statusCode, 200);
+  assert.equal(joinReaderTwo.statusCode, 200);
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_note_read_state_markdown",
+          type: "create_markdown",
+          path: "Week-04.md"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const markdownEntry = createEntryResponse.json().results[0].entry;
+
+  const readerOneReadStateUpdates: Array<{
+    workspaceId: string;
+    entryId: string;
+    contentVersion: number;
+    lastReadContentVersion: number;
+    unread: boolean;
+  }> = [];
+  const readerTwoReadStateUpdates: Array<{
+    workspaceId: string;
+    entryId: string;
+    contentVersion: number;
+    lastReadContentVersion: number;
+    unread: boolean;
+  }> = [];
+  const readerOneReadStateStream = app.rolay.noteReadState.openStream(
+    readerOneSession.user as {
+      id: string;
+      username: string;
+      displayName: string;
+      isAdmin: boolean;
+      globalRole: "admin" | "writer" | "reader";
+    },
+    roomId,
+    (event) => {
+      readerOneReadStateUpdates.push(event.payload);
+    }
+  );
+  const readerTwoReadStateStream = app.rolay.noteReadState.openStream(
+    readerTwoSession.user as {
+      id: string;
+      username: string;
+      displayName: string;
+      isAdmin: boolean;
+      globalRole: "admin" | "writer" | "reader";
+    },
+    roomId,
+    (event) => {
+      readerTwoReadStateUpdates.push(event.payload);
+    }
+  );
+
+  assert.deepEqual(readerOneReadStateStream.snapshot, {
+    workspaceId: roomId,
+    notes: [
+      {
+        entryId: markdownEntry.id,
+        contentVersion: 0,
+        lastReadContentVersion: 0,
+        unread: false
+      }
+    ]
+  });
+  assert.deepEqual(readerTwoReadStateStream.snapshot, {
+    workspaceId: roomId,
+    notes: [
+      {
+        entryId: markdownEntry.id,
+        contentVersion: 0,
+        lastReadContentVersion: 0,
+        unread: false
+      }
+    ]
+  });
+
+  await app.listen({
+    host: "127.0.0.1",
+    port: 0
+  });
+
+  const address = app.server.address();
+  assert.ok(address && typeof address === "object");
+  const wsUrl = `ws://127.0.0.1:${address.port}/v1/crdt`;
+
+  const writerTokenResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${markdownEntry.id}/crdt-token`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+  const readerOneTokenResponse = await app.inject({
+    method: "POST",
+    url: `/v1/files/${markdownEntry.id}/crdt-token`,
+    headers: {
+      authorization: `Bearer ${readerOneSession.accessToken}`
+    }
+  });
+
+  assert.equal(writerTokenResponse.statusCode, 200);
+  assert.equal(readerOneTokenResponse.statusCode, 200);
+
+  (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
+
+  const writerDoc = new Y.Doc();
+  const readerOneDoc = new Y.Doc();
+  const writerText = writerDoc.getText("content");
+  let writerSynced = false;
+  let readerOneSynced = false;
+
+  const writerProvider = new HocuspocusProvider({
+    url: wsUrl,
+    name: markdownEntry.docId,
+    document: writerDoc,
+    token: writerTokenResponse.json().token,
+    onSynced: ({ state }) => {
+      if (state) {
+        writerSynced = true;
+      }
+    }
+  });
+  const readerOneProvider = new HocuspocusProvider({
+    url: wsUrl,
+    name: markdownEntry.docId,
+    document: readerOneDoc,
+    token: readerOneTokenResponse.json().token,
+    onSynced: ({ state }) => {
+      if (state) {
+        readerOneSynced = true;
+      }
+    }
+  });
+
+  await waitFor(() => writerSynced && readerOneSynced);
+
+  writerProvider.setAwarenessField("user", {
+    userId: writerUser.id,
+    displayName: writerUser.displayName,
+    color: "#8b5cf6"
+  });
+  writerProvider.setAwarenessField("viewer", {
+    workspaceId: roomId,
+    entryId: markdownEntry.id,
+    active: true
+  });
+  readerOneProvider.setAwarenessField("user", {
+    userId: readerOneUser.id,
+    displayName: readerOneUser.displayName,
+    color: "#22c55e"
+  });
+  readerOneProvider.setAwarenessField("viewer", {
+    workspaceId: roomId,
+    entryId: markdownEntry.id,
+    active: true
+  });
+
+  writerText.insert(0, "Shared update");
+
+  await waitFor(
+    () =>
+      readerTwoReadStateUpdates.some(
+        (payload) =>
+          payload.entryId === markdownEntry.id &&
+          payload.contentVersion === 1 &&
+          payload.lastReadContentVersion === 0 &&
+          payload.unread === true
+      ),
+    4_000
+  );
+
+  const readerOneUnreadUpdate = readerOneReadStateUpdates.find(
+    (payload) =>
+      payload.entryId === markdownEntry.id &&
+      payload.contentVersion === 1 &&
+      payload.lastReadContentVersion === 1 &&
+      payload.unread === false
+  );
+  const readerTwoUnreadUpdate = readerTwoReadStateUpdates.find(
+    (payload) =>
+      payload.entryId === markdownEntry.id &&
+      payload.contentVersion === 1 &&
+      payload.lastReadContentVersion === 0 &&
+      payload.unread === true
+  );
+
+  assert.ok(readerOneUnreadUpdate);
+  assert.ok(readerTwoUnreadUpdate);
+  assert.equal(readerOneUnreadUpdate.workspaceId, roomId);
+  assert.equal(readerTwoUnreadUpdate.workspaceId, roomId);
+  assert.equal(
+    app.rolay.state.noteReadStates.get(
+      noteReadStateKey(roomId, markdownEntry.id, readerOneUser.id)
+    )?.lastReadContentVersion,
+    1
+  );
+  assert.equal(
+    app.rolay.state.noteReadStates.get(
+      noteReadStateKey(roomId, markdownEntry.id, writerUser.id)
+    )?.lastReadContentVersion,
+    1
+  );
+
+  const markReadResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/notes/${markdownEntry.id}/read`,
+    headers: {
+      authorization: `Bearer ${readerTwoSession.accessToken}`
+    },
+    payload: {
+      contentVersion: 1
+    }
+  });
+
+  assert.equal(markReadResponse.statusCode, 200);
+  assert.deepEqual(markReadResponse.json(), {
+    workspaceId: roomId,
+    entryId: markdownEntry.id,
+    contentVersion: 1,
+    lastReadContentVersion: 1,
+    unread: false
+  });
+
+  await waitFor(
+    () =>
+      readerTwoReadStateUpdates.some(
+        (payload) =>
+          payload.entryId === markdownEntry.id &&
+          payload.contentVersion === 1 &&
+          payload.lastReadContentVersion === 1 &&
+          payload.unread === false
+      ),
+    4_000
+  );
+
+  const readerTwoMarkedRead = readerTwoReadStateUpdates.find(
+    (payload) =>
+      payload.entryId === markdownEntry.id &&
+      payload.contentVersion === 1 &&
+      payload.lastReadContentVersion === 1 &&
+      payload.unread === false
+  );
+
+  assert.ok(readerTwoMarkedRead);
+  assert.equal(readerTwoMarkedRead.workspaceId, roomId);
+
+  const markReadIdempotentResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/notes/${markdownEntry.id}/read`,
+    headers: {
+      authorization: `Bearer ${readerTwoSession.accessToken}`
+    },
+    payload: {
+      contentVersion: 0
+    }
+  });
+
+  assert.equal(markReadIdempotentResponse.statusCode, 200);
+  assert.deepEqual(markReadIdempotentResponse.json(), {
+    workspaceId: roomId,
+    entryId: markdownEntry.id,
+    contentVersion: 1,
+    lastReadContentVersion: 1,
+    unread: false
+  });
+
+  writerProvider.destroy();
+  readerOneProvider.destroy();
+  readerOneReadStateStream.unsubscribe();
+  readerTwoReadStateStream.unsubscribe();
   await app.close();
   await cleanupTestEnv(env);
 });
