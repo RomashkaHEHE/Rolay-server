@@ -205,6 +205,9 @@ Presence rules:
 - source of truth is Markdown `Yjs` awareness
 - selection is optional
 - a viewer without a caret/selection still counts as present
+- `viewer.sessionId` comes from awareness and is forwarded into room note-presence payloads
+- `viewer.viewportFrom` and `viewer.viewportTo` are accepted in awareness for follow-mode clients,
+  but are not currently exposed through the room SSE payload
 - presence is keyed by `workspaceId` + `entryId`
 - each live viewer gets its own `presenceId`
 - the same `userId` can appear multiple times
@@ -220,6 +223,7 @@ Example snapshot payload:
       "viewers": [
         {
           "presenceId": "presence:ws_1:fil_123:9384702",
+          "sessionId": "session:client-abc",
           "userId": "usr_1",
           "displayName": "Roma",
           "color": "#8b5cf6",
@@ -240,6 +244,7 @@ Example per-note update payload:
   "viewers": [
     {
       "presenceId": "presence:ws_1:fil_123:9384702",
+      "sessionId": "session:client-abc",
       "userId": "usr_1",
       "displayName": "Roma",
       "color": "#8b5cf6",
@@ -247,6 +252,7 @@ Example per-note update payload:
     },
     {
       "presenceId": "presence:ws_1:fil_123:9384703",
+      "sessionId": "session:client-def",
       "userId": "usr_1",
       "displayName": "Roma",
       "color": "#22c55e",

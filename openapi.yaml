@@ -450,13 +450,13 @@ paths:
           content:
             text/event-stream:
               schema:
-                type: string
-                example: |
-                  event: presence.snapshot
-                  data: {"workspaceId":"ws_01","notes":[{"entryId":"fil_01","viewers":[{"presenceId":"presence:ws_01:fil_01:9384702","userId":"usr_01","displayName":"Roma","color":"#8b5cf6","hasSelection":false}]}]}
-                  
-                  event: note.presence.updated
-                  data: {"workspaceId":"ws_01","entryId":"fil_01","viewers":[{"presenceId":"presence:ws_01:fil_01:9384702","userId":"usr_01","displayName":"Roma","color":"#8b5cf6","hasSelection":true}]}
+                  type: string
+                  example: |
+                    event: presence.snapshot
+                    data: {"workspaceId":"ws_01","notes":[{"entryId":"fil_01","viewers":[{"presenceId":"presence:ws_01:fil_01:9384702","sessionId":"session:client-abc","userId":"usr_01","displayName":"Roma","color":"#8b5cf6","hasSelection":false}]}]}
+                    
+                    event: note.presence.updated
+                    data: {"workspaceId":"ws_01","entryId":"fil_01","viewers":[{"presenceId":"presence:ws_01:fil_01:9384702","sessionId":"session:client-abc","userId":"usr_01","displayName":"Roma","color":"#8b5cf6","hasSelection":true}]}
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
@@ -1578,9 +1578,11 @@ paths:
     NotePresenceViewer:
       type: object
       additionalProperties: false
-      required: [presenceId, userId, displayName, color, hasSelection]
+      required: [presenceId, sessionId, userId, displayName, color, hasSelection]
       properties:
         presenceId:
+          type: string
+        sessionId:
           type: string
         userId:
           type: string
@@ -1622,10 +1624,10 @@ paths:
           type: string
         entryId:
           type: string
-          viewers:
-            type: array
-            items:
-              $ref: '#/components/schemas/NotePresenceViewer'
+        viewers:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotePresenceViewer'
     NoteReadStateNote:
       type: object
       additionalProperties: false

@@ -158,6 +158,7 @@ Most business logic lives here.
   - room-level live note presence aggregation
   - viewer snapshot/update fanout
   - duplicate-presence handling for multi-device users
+  - forwards awareness `sessionId` into room-level presence viewers for follow mode
 
 - `src/services/note-read-state-service.ts`
   - per-account Markdown unread/read-state snapshots

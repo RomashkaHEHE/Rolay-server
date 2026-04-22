@@ -209,6 +209,7 @@ export interface NoteReadStateRecord {
 
 export interface NotePresenceViewer {
   presenceId: string;
+  sessionId: string;
   userId: string;
   displayName: string;
   color: string | null;

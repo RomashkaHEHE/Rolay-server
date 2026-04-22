@@ -50,6 +50,7 @@ This is legacy naming. It is normal in this repository.
   - room-local tree and file events
 - `/v1/workspaces/{workspaceId}/note-presence/events`
   - room-local live note presence aggregated from markdown awareness
+  - includes awareness-derived `sessionId` for follow-mode joins
 - `/v1/workspaces/{workspaceId}/note-read-state/events`
   - room-local persisted unread/read state for markdown notes
 - `/v1/events/settings`

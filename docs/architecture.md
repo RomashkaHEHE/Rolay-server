@@ -97,9 +97,10 @@ The server uses five transports:
    - `GET /v1/events/settings`
    - used for profile, room list, admin list, invite, and membership updates
 
-4. Note presence SSE
-   - `GET /v1/workspaces/{workspaceId}/note-presence/events`
-   - used for room-wide live note viewer state aggregated from Markdown awareness
+  4. Note presence SSE
+     - `GET /v1/workspaces/{workspaceId}/note-presence/events`
+    - used for room-wide live note viewer state aggregated from Markdown awareness
+    - exposes awareness-derived `sessionId` for follow-mode joins back into document awareness
 
 5. Note read-state SSE
    - `GET /v1/workspaces/{workspaceId}/note-read-state/events`

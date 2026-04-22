@@ -2616,7 +2616,10 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   providerA.setAwarenessField("viewer", {
     workspaceId: roomId,
     entryId: markdownEntry.id,
-    active: true
+    active: true,
+    sessionId: "session:writer-device-a",
+    viewportFrom: 0,
+    viewportTo: 32
   });
 
   const firstPresence = await waitForSseEventMatching<{
@@ -2624,6 +2627,7 @@ test("room note presence SSE reflects markdown awareness without requiring selec
     entryId: string;
     viewers: Array<{
       presenceId: string;
+      sessionId: string;
       userId: string;
       displayName: string;
       color: string | null;
@@ -2641,6 +2645,7 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   assert.equal(firstViewer.userId, writerUser.id);
   assert.equal(firstViewer.displayName, writerUser.displayName);
   assert.equal(firstViewer.color, "#8b5cf6");
+  assert.equal(firstViewer.sessionId, "session:writer-device-a");
   assert.equal(firstViewer.hasSelection, false);
   const firstPresenceId = firstViewer.presenceId;
 
@@ -2652,13 +2657,17 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   providerB.setAwarenessField("viewer", {
     workspaceId: roomId,
     entryId: markdownEntry.id,
-    active: true
+    active: true,
+    sessionId: "session:writer-device-b",
+    viewportFrom: 12,
+    viewportTo: 64
   });
 
   const secondPresence = await waitForSseEventMatching<{
     entryId: string;
     viewers: Array<{
       presenceId: string;
+      sessionId: string;
       userId: string;
       displayName: string;
       color: string | null;
@@ -2677,6 +2686,10 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   );
   assert.ok(
     secondPresence.payload.viewers.some((viewer) => viewer.presenceId === firstPresenceId)
+  );
+  assert.deepEqual(
+    [...new Set(secondPresence.payload.viewers.map((viewer) => viewer.sessionId))].sort(),
+    ["session:writer-device-a", "session:writer-device-b"]
   );
   assert.deepEqual(
     [...new Set(secondPresence.payload.viewers.map((viewer) => viewer.color))].sort(),
@@ -2984,7 +2997,10 @@ test("room note read state SSE tracks unread markdown state per account", async 
   writerProvider.setAwarenessField("viewer", {
     workspaceId: roomId,
     entryId: markdownEntry.id,
-    active: true
+    active: true,
+    sessionId: "session:writer-laptop",
+    viewportFrom: 0,
+    viewportTo: 24
   });
   readerOneProvider.setAwarenessField("user", {
     userId: readerOneUser.id,
@@ -2994,7 +3010,10 @@ test("room note read state SSE tracks unread markdown state per account", async 
   readerOneProvider.setAwarenessField("viewer", {
     workspaceId: roomId,
     entryId: markdownEntry.id,
-    active: true
+    active: true,
+    sessionId: "session:reader-one-laptop",
+    viewportFrom: 0,
+    viewportTo: 24
   });
 
   writerText.insert(0, "Shared update");
