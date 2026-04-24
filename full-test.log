@@ -1,0 +1,282 @@
+
+> rolay-server@0.1.0 test
+> tsx --test test/app.test.ts
+
+TAP version 13
+# Subtest: memory state snapshot round-trip preserves persisted records
+ok 1 - memory state snapshot round-trip preserves persisted records
+  ---
+  duration_ms: 1.9517
+  ...
+# Subtest: GET /ready returns health payload
+ok 2 - GET /ready returns health payload
+  ---
+  duration_ms: 140.4947
+  ...
+# Subtest: auth login and refresh issue opaque bearer tokens with global role
+ok 3 - auth login and refresh issue opaque bearer tokens with global role
+  ---
+  duration_ms: 27.2664
+  ...
+# Subtest: users can change password when they know the current one
+ok 4 - users can change password when they know the current one
+  ---
+  duration_ms: 26.0699
+  ...
+# Subtest: seed admin password is updated when env password changes on startup
+ok 5 - seed admin password is updated when env password changes on startup
+  ---
+  duration_ms: 1.638
+  ...
+# Subtest: settings events are filtered for regular users and admins
+ok 6 - settings events are filtered for regular users and admins
+  ---
+  duration_ms: 26.714
+  ...
+# Subtest: settings SSE stream sends ready event and supports cursor resume
+ok 7 - settings SSE stream sends ready event and supports cursor resume
+  ---
+  duration_ms: 4074.1251
+  ...
+# Subtest: writer can create duplicate-named rooms, manage invite key, and members can edit
+ok 8 - writer can create duplicate-named rooms, manage invite key, and members can edit
+  ---
+  duration_ms: 35.7181
+  ...
+# Subtest: room members endpoint is available to participants and rejects non-members
+ok 9 - room members endpoint is available to participants and rejects non-members
+  ---
+  duration_ms: 19.7994
+  ...
+# Subtest: admin can manage users and rooms
+ok 10 - admin can manage users and rooms
+  ---
+  duration_ms: 33.0307
+  ...
+# Subtest: file endpoints issue CRDT tokens and blob tickets for room members
+ok 11 - file endpoints issue CRDT tokens and blob tickets for room members
+  ---
+  duration_ms: 32.4946
+  ...
+# Subtest: authenticated blob content upload endpoint accepts raw octet-stream and returns detailed hash mismatch errors
+ok 12 - authenticated blob content upload endpoint accepts raw octet-stream and returns detailed hash mismatch errors
+  ---
+  duration_ms: 29.7666
+  ...
+# Subtest: blob uploads accept hex sha256 digests and normalize them to canonical storage keys
+ok 13 - blob uploads accept hex sha256 digests and normalize them to canonical storage keys
+  ---
+  duration_ms: 20.6284
+  ...
+# Subtest: blob upload sessions can be canceled before transfer begins
+ok 14 - blob upload sessions can be canceled before transfer begins
+  ---
+  duration_ms: 18.3261
+  ...
+# Subtest: blob uploads can be resumed from the last confirmed byte offset
+ok 15 - blob uploads can be resumed from the last confirmed byte offset
+  ---
+  duration_ms: 26.7677
+  ...
+# Subtest: authenticated blob content endpoint supports ranged downloads
+ok 16 - authenticated blob content endpoint supports ranged downloads
+  ---
+  duration_ms: 24.7738
+  ...
+# Subtest: realtime CRDT websocket sync persists markdown document state
+ok 17 - realtime CRDT websocket sync persists markdown document state
+  ---
+  duration_ms: 297.3792
+  ...
+# Subtest: room note presence SSE reflects markdown awareness without requiring selection
+not ok 18 - room note presence SSE reflects markdown awareness without requiring selection
+  ---
+  duration_ms: 64.2818
+  location: 'C:\\Users\\Roma\\Desktop\\projects\\Rolay\\server\\test\\app.test.ts:2:62731'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+    
+    + 'legacy:ws_5cf9cacc-ab44-4a5e-ab11-96b75dffde67:fil_64661478-b35f-4753-87d6-8e59206dc61c:1475630688'
+    - 'session:writer-device-a'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'session:writer-device-a'
+  actual: 'legacy:ws_5cf9cacc-ab44-4a5e-ab11-96b75dffde67:fil_64661478-b35f-4753-87d6-8e59206dc61c:1475630688'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\Roma\Desktop\projects\Rolay\server\test\app.test.ts:2648:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: room note presence keeps legacy awareness clients visible without explicit sessionId
+ok 19 - room note presence keeps legacy awareness clients visible without explicit sessionId
+  ---
+  duration_ms: 17.5274
+  ...
+# Subtest: room note read state SSE tracks unread markdown state per account
+ok 20 - room note read state SSE tracks unread markdown state per account
+  ---
+  duration_ms: 168.317
+  ...
+# Subtest: markdown bootstrap endpoint returns current stored Yjs state for workspace markdown files
+ok 21 - markdown bootstrap endpoint returns current stored Yjs state for workspace markdown files
+  ---
+  duration_ms: 19.6486
+  ...
+# Subtest: excalidraw entries use blob persistence and reject markdown-only endpoints
+ok 22 - excalidraw entries use blob persistence and reject markdown-only endpoints
+  ---
+  duration_ms: 21.2819
+  ...
+# Subtest: excalidraw entries support blob-only fallback flow without drawing websocket
+ok 23 - excalidraw entries support blob-only fallback flow without drawing websocket
+  ---
+  duration_ms: 21.9063
+  ...
+# Subtest: excalidraw drawing live sync supports lease, control requests, pointer broadcast, and reconnect snapshot
+ok 24 - excalidraw drawing live sync supports lease, control requests, pointer broadcast, and reconnect snapshot
+  ---
+  duration_ms: 185.8386
+  ...
+# Subtest: excalidraw editor lease expires after missed heartbeat
+ok 25 - excalidraw editor lease expires after missed heartbeat
+  ---
+  duration_ms: 2216.9664
+  ...
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token
+# [onAuthenticate] invalid-crdt-token

@@ -172,9 +172,6 @@ export class NotePresenceService {
       viewerState && typeof viewerState.sessionId === "string"
         ? viewerState.sessionId.trim()
         : "";
-    if (!sessionId) {
-      return null;
-    }
 
     const userId =
       typeof state.user.userId === "string"
@@ -200,9 +197,13 @@ export class NotePresenceService {
       // Presence is intentionally not deduplicated by userId. Multiple devices/windows of the same
       // account should still render as separate live viewers for the note.
       presenceId: `presence:${context.workspaceId}:${context.entryId}:${state.clientId}`,
-      // Follow mode needs the exact live client session identifier from awareness so room-level
-      // chips can be joined back to per-document awareness records without server-side synthesis.
-      sessionId,
+      // Newer clients send viewer.sessionId explicitly for follow-mode joins. Older plugin builds
+      // did not, so we synthesize a stable session-scoped fallback from the live client record
+      // instead of dropping them from room presence entirely.
+      sessionId:
+        sessionId !== ""
+          ? sessionId
+          : `legacy:${context.workspaceId}:${context.entryId}:${state.clientId}`,
       userId,
       displayName,
       color,

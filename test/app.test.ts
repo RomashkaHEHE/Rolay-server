@@ -2636,7 +2636,10 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   }>(
     presenceStream,
     "note.presence.updated",
-    (payload) => payload.entryId === markdownEntry.id && payload.viewers.length === 1
+    (payload) =>
+      payload.entryId === markdownEntry.id &&
+      payload.viewers.length === 1 &&
+      payload.viewers[0]?.sessionId === "session:writer-device-a"
   );
 
   assert.equal(firstPresence.payload.workspaceId, roomId);
@@ -2676,7 +2679,11 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   }>(
     presenceStream,
     "note.presence.updated",
-    (payload) => payload.entryId === markdownEntry.id && payload.viewers.length === 2
+    (payload) =>
+      payload.entryId === markdownEntry.id &&
+      payload.viewers.length === 2 &&
+      payload.viewers.some((viewer) => viewer.sessionId === "session:writer-device-a") &&
+      payload.viewers.some((viewer) => viewer.sessionId === "session:writer-device-b")
   );
 
   assert.equal(secondPresence.payload.viewers.every((viewer) => viewer.userId === writerUser.id), true);
@@ -2687,9 +2694,15 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   assert.ok(
     secondPresence.payload.viewers.some((viewer) => viewer.presenceId === firstPresenceId)
   );
-  assert.deepEqual(
-    [...new Set(secondPresence.payload.viewers.map((viewer) => viewer.sessionId))].sort(),
-    ["session:writer-device-a", "session:writer-device-b"]
+  assert.ok(
+    secondPresence.payload.viewers.some(
+      (viewer) => viewer.sessionId === "session:writer-device-a"
+    )
+  );
+  assert.ok(
+    secondPresence.payload.viewers.some(
+      (viewer) => viewer.sessionId === "session:writer-device-b"
+    )
   );
   assert.deepEqual(
     [...new Set(secondPresence.payload.viewers.map((viewer) => viewer.color))].sort(),
@@ -2759,6 +2772,119 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   assert.deepEqual(afterSecondDisconnect.payload.viewers, []);
 
   await presenceStream.reader.cancel();
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("room note presence keeps legacy awareness clients visible without explicit sessionId", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const writerUser = writerSession.user as {
+    id: string;
+    username: string;
+    displayName: string;
+    isAdmin: boolean;
+    globalRole: "admin" | "writer" | "reader";
+  };
+
+  const roomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Legacy Presence Notes"
+    }
+  });
+
+  assert.equal(roomResponse.statusCode, 201);
+  const roomId = roomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_note_presence_legacy_markdown",
+          type: "create_markdown",
+          path: "Week-03.md"
+        }
+      ]
+    }
+  });
+
+  assert.equal(createEntryResponse.statusCode, 200);
+  const markdownEntry = createEntryResponse.json().results[0].entry;
+
+  const updates: Array<{
+    workspaceId: string;
+    entryId: string;
+    viewers: Array<{
+      presenceId: string;
+      sessionId: string;
+      userId: string;
+      displayName: string;
+      color: string | null;
+      hasSelection: boolean;
+    }>;
+  }> = [];
+
+  const stream = app.rolay.notePresence.openStream(writerUser, roomId, (event) => {
+    updates.push(event.payload);
+  });
+
+  assert.deepEqual(stream.snapshot, {
+    workspaceId: roomId,
+    notes: []
+  });
+
+  app.rolay.notePresence.reconcileAwareness(
+    {
+      workspaceId: roomId,
+      entryId: markdownEntry.id
+    },
+    [
+      {
+        clientId: 101,
+        user: {
+          userId: writerUser.id,
+          displayName: writerUser.displayName,
+          color: "#8b5cf6"
+        },
+        viewer: {
+          workspaceId: roomId,
+          entryId: markdownEntry.id,
+          active: true
+        }
+      }
+    ]
+  );
+
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]?.entryId, markdownEntry.id);
+  assert.equal(updates[0]?.viewers.length, 1);
+  assert.equal(updates[0]?.viewers[0]?.userId, writerUser.id);
+  assert.equal(updates[0]?.viewers[0]?.sessionId, `legacy:${roomId}:${markdownEntry.id}:101`);
+
+  stream.unsubscribe();
   await app.close();
   await cleanupTestEnv(env);
 });

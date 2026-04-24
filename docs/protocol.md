@@ -205,7 +205,10 @@ Presence rules:
 - source of truth is Markdown `Yjs` awareness
 - selection is optional
 - a viewer without a caret/selection still counts as present
-- `viewer.sessionId` comes from awareness and is forwarded into room note-presence payloads
+- `viewer.sessionId` is forwarded from awareness when present
+- legacy clients that do not send `viewer.sessionId` still remain visible; the server synthesizes a
+  stable fallback `sessionId` from the live presence record so older plugin builds do not disappear
+  from room note presence entirely
 - `viewer.viewportFrom` and `viewer.viewportTo` are accepted in awareness for follow-mode clients,
   but are not currently exposed through the room SSE payload
 - presence is keyed by `workspaceId` + `entryId`

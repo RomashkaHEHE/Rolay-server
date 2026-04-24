@@ -1584,6 +1584,7 @@ paths:
           type: string
         sessionId:
           type: string
+          description: Awareness session identifier when provided by the client, otherwise a server-synthesized legacy fallback for older clients.
         userId:
           type: string
         displayName:
