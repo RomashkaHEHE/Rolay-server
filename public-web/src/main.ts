@@ -224,7 +224,7 @@ async function openDrawing(entry: PublicEntry): Promise<void> {
 
   const raw = await response.text();
   const { renderDrawing } = await import("./drawing-viewer");
-  renderDrawing(raw, drawingHost);
+  await renderDrawing(raw, drawingHost);
 }
 
 function openEventStream(manifest: PublicManifest): void {

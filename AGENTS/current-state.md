@@ -70,6 +70,9 @@ If you start another substantial feature, create a new task file before leaving 
   viewer served from `/`.
 - Deployed the public read-only site rollout to the production VM after the GitHub Actions SSH
   failure was caused by the server being temporarily offline.
+- Improved the public web viewer visual language, added lazy KaTeX rendering for Markdown math, and
+  switched public Excalidraw rendering to the official Excalidraw SVG export path with a lightweight
+  canvas fallback.
 
 ## Where To Look First
 
@@ -112,6 +115,8 @@ For canonical protocol details:
   website traffic.
 - Public manifests intentionally do not list image files as tree entries; images are exposed only
   through the `assets` map for Markdown embeds.
+- Keep the public web shell lightweight. Heavy readers such as Markdown+KaTeX and Excalidraw should
+  remain lazy-loaded chunks rather than blocking `/`.
 - The plugin still needs UI wiring for publication toggles and public-link display; server support is
   already present.
 - `docs/*` should remain factual; do not dump unfinished-task memory there.

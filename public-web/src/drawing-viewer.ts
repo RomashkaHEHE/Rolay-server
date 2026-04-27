@@ -1,4 +1,12 @@
-export function renderDrawing(raw: string, drawingHost: HTMLElement): void {
+import { exportToSvg, restoreAppState, restoreElements } from "@excalidraw/excalidraw";
+
+interface ExcalidrawScene {
+  elements?: unknown[];
+  appState?: Record<string, unknown>;
+  files?: Record<string, unknown>;
+}
+
+export async function renderDrawing(raw: string, drawingHost: HTMLElement): Promise<void> {
   const scene = parseExcalidrawScene(raw);
   if (!scene) {
     drawingHost.innerHTML = `<pre class="drawing-raw"></pre>`;
@@ -6,6 +14,47 @@ export function renderDrawing(raw: string, drawingHost: HTMLElement): void {
     return;
   }
 
+  try {
+    await renderOfficialExcalidraw(scene, drawingHost);
+    return;
+  } catch {
+    renderFallbackCanvas(scene, drawingHost);
+  }
+}
+
+async function renderOfficialExcalidraw(
+  scene: ExcalidrawScene,
+  drawingHost: HTMLElement
+): Promise<void> {
+  const elements = restoreElements((scene.elements ?? []) as never[], null);
+  const appState = restoreAppState(
+    {
+      ...(scene.appState ?? {}),
+      theme: "light",
+      viewBackgroundColor:
+        typeof scene.appState?.viewBackgroundColor === "string"
+          ? scene.appState.viewBackgroundColor
+          : "#f8f4e8",
+      exportBackground: true,
+      exportWithDarkMode: false
+    },
+    null
+  );
+  const svg = await exportToSvg({
+    elements,
+    appState,
+    files: (scene.files ?? {}) as never,
+    exportPadding: 28,
+    renderEmbeddables: true
+  });
+  svg.classList.add("drawing-svg");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Excalidraw drawing");
+  drawingHost.innerHTML = "";
+  drawingHost.append(svg);
+}
+
+function renderFallbackCanvas(scene: ExcalidrawScene, drawingHost: HTMLElement): void {
   drawingHost.innerHTML = `<canvas class="drawing-canvas"></canvas>`;
   const canvas = drawingHost.querySelector<HTMLCanvasElement>("canvas")!;
   const ctx = canvas.getContext("2d");
@@ -32,7 +81,7 @@ export function renderDrawing(raw: string, drawingHost: HTMLElement): void {
   }
 }
 
-function parseExcalidrawScene(raw: string): { elements?: unknown[] } | null {
+function parseExcalidrawScene(raw: string): ExcalidrawScene | null {
   const fenced = raw.match(/```json\s*([\s\S]*?)```/i)?.[1];
   const candidate = fenced ?? raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
   try {

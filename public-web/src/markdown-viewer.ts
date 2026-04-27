@@ -12,6 +12,8 @@ import {
   StateField
 } from "@codemirror/state";
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import * as Y from "yjs";
 
 export interface PublicAsset {
@@ -67,6 +69,13 @@ interface RemoteCursor {
   label: string;
 }
 
+interface MathRange {
+  from: number;
+  to: number;
+  expression: string;
+  displayMode: boolean;
+}
+
 export interface MarkdownViewer {
   updateAssets(assets: Record<string, PublicAsset>): void;
   destroy(): void;
@@ -97,6 +106,10 @@ class ImageWidget extends WidgetType {
     super();
   }
 
+  eq(other: ImageWidget): boolean {
+    return this.asset.contentUrl === other.asset.contentUrl;
+  }
+
   toDOM(): HTMLElement {
     const figure = document.createElement("figure");
     figure.className = "note-image";
@@ -109,6 +122,35 @@ class ImageWidget extends WidgetType {
     caption.textContent = this.asset.path;
     figure.append(image, caption);
     return figure;
+  }
+}
+
+class MathWidget extends WidgetType {
+  constructor(
+    private readonly expression: string,
+    private readonly displayMode: boolean
+  ) {
+    super();
+  }
+
+  eq(other: MathWidget): boolean {
+    return this.expression === other.expression && this.displayMode === other.displayMode;
+  }
+
+  toDOM(): HTMLElement {
+    const container = document.createElement(this.displayMode ? "div" : "span");
+    container.className = this.displayMode ? "math-block" : "math-inline";
+    try {
+      katex.render(this.expression, container, {
+        displayMode: this.displayMode,
+        throwOnError: false,
+        strict: "ignore",
+        trust: false
+      });
+    } catch {
+      container.textContent = this.expression;
+    }
+    return container;
   }
 }
 
@@ -188,20 +230,38 @@ const imageField = StateField.define<{
   provide: (field) => EditorView.decorations.from(field, (value) => value.decorations)
 });
 
+const mathField = StateField.define<DecorationSet>({
+  create(state) {
+    return buildMathDecorations(state);
+  },
+  update(value, transaction) {
+    if (!transaction.docChanged) {
+      return value.map(transaction.changes);
+    }
+
+    return buildMathDecorations(transaction.state);
+  },
+  provide: (field) => EditorView.decorations.from(field)
+});
+
 const rolayTheme = EditorView.theme({
   "&": {
     height: "100%",
     backgroundColor: "transparent",
-    color: "#f2ecd7",
+    color: "#ebe4d6",
     fontSize: "16px"
   },
   ".cm-content": {
-    fontFamily: '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
-    lineHeight: "1.72",
-    padding: "28px"
+    fontFamily: '"Aptos", "Segoe UI", "Helvetica Neue", sans-serif',
+    lineHeight: "1.74",
+    padding: "28px",
+    maxWidth: "960px"
   },
   ".cm-line": {
     padding: "0 2px"
+  },
+  ".cm-line:has(.cm-header)": {
+    fontFamily: 'Georgia, "Times New Roman", serif'
   },
   ".cm-scroller": {
     overflow: "auto"
@@ -229,6 +289,7 @@ export async function openMarkdownViewer(params: {
         rolayTheme,
         remoteCursorField,
         imageField,
+        mathField,
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
         EditorView.lineWrapping
@@ -246,7 +307,8 @@ export async function openMarkdownViewer(params: {
       method: "POST"
     }
   );
-  const provider = new HocuspocusProvider({
+  let provider: HocuspocusProvider;
+  provider = new HocuspocusProvider({
     url: token.wsUrl,
     name: token.docId,
     document,
@@ -254,6 +316,7 @@ export async function openMarkdownViewer(params: {
     onSynced: ({ state }) => {
       if (state) {
         syncEditor(editor, text.toString(), assets);
+        renderRemotePresence(provider, editor, params.presence);
       }
     }
   });
@@ -261,9 +324,12 @@ export async function openMarkdownViewer(params: {
   text.observe(() => {
     syncEditor(editor, text.toString(), assets);
   });
-  provider.awareness.on("change", () => {
+  const renderPresence = () => {
     renderRemotePresence(provider, editor, params.presence);
-  });
+  };
+  provider.awareness?.on("change", renderPresence);
+  provider.awareness?.on("update", renderPresence);
+  queueMicrotask(renderPresence);
 
   return {
     updateAssets(nextAssets) {
@@ -305,27 +371,35 @@ function renderRemotePresence(
   editor: EditorView,
   presence: HTMLElement
 ): void {
+  const awareness = provider.awareness;
+  if (!awareness) {
+    editor.dispatch({
+      effects: setRemoteCursors.of([])
+    });
+    presence.innerHTML = "";
+    return;
+  }
+
   const cursors: RemoteCursor[] = [];
-  for (const value of provider.awareness.getStates().values()) {
-    const record = value as {
-      user?: { displayName?: string; color?: string };
-      selection?: { anchor?: number; head?: number };
-    };
-    if (!record.user?.displayName || !record.selection) {
+  const labels = new Map<string, { label: string; color: string }>();
+  for (const value of awareness.getStates().values()) {
+    const record = value as Record<string, unknown>;
+    const user = extractUser(record);
+    if (!user) {
       continue;
     }
 
-    const anchor = Number(record.selection.anchor);
-    const head = Number(record.selection.head);
-    if (!Number.isFinite(anchor) || !Number.isFinite(head)) {
+    labels.set(`${user.label}:${user.color}:${labels.size}`, user);
+    const selection = extractSelection(record);
+    if (!selection) {
       continue;
     }
 
     cursors.push({
-      from: anchor,
-      to: head,
-      color: record.user.color ?? "#b9f18d",
-      label: record.user.displayName
+      from: selection.anchor,
+      to: selection.head,
+      color: user.color,
+      label: user.label
     });
   }
 
@@ -333,13 +407,68 @@ function renderRemotePresence(
     effects: setRemoteCursors.of(cursors)
   });
   presence.innerHTML = "";
-  for (const cursor of cursors) {
+  for (const viewer of labels.values()) {
     const chip = document.createElement("span");
     chip.className = "presence-chip";
-    chip.style.borderColor = cursor.color;
-    chip.textContent = cursor.label;
+    chip.style.borderColor = viewer.color;
+    chip.textContent = viewer.label;
     presence.append(chip);
   }
+}
+
+function extractUser(record: Record<string, unknown>): { label: string; color: string } | null {
+  const user = asRecord(record.user);
+  if (!user) {
+    return null;
+  }
+
+  const label = firstString(user.displayName, user.name, user.username, user.id, user.userId);
+  if (!label) {
+    return null;
+  }
+
+  return {
+    label,
+    color: firstString(user.color, record.color) ?? "#d8a657"
+  };
+}
+
+function extractSelection(
+  record: Record<string, unknown>
+): { anchor: number; head: number } | null {
+  const viewer = asRecord(record.viewer);
+  const candidates = [
+    record.selection,
+    record.cursor,
+    record.caret,
+    viewer?.selection,
+    viewer?.cursor,
+    viewer
+  ];
+
+  for (const candidate of candidates) {
+    const selection = toSelection(candidate);
+    if (selection) {
+      return selection;
+    }
+  }
+
+  return null;
+}
+
+function toSelection(value: unknown): { anchor: number; head: number } | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const anchor = firstFiniteNumber(record.anchor, record.from, record.position, record.pos);
+  const head = firstFiniteNumber(record.head, record.to, record.anchor, record.from, record.position, record.pos);
+  if (anchor === null || head === null) {
+    return null;
+  }
+
+  return { anchor, head };
 }
 
 function buildImageDecorations(
@@ -366,6 +495,89 @@ function buildImageDecorations(
   }
 
   return builder.finish();
+}
+
+function buildMathDecorations(state: EditorState): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const range of findMathRanges(state.doc.toString())) {
+    builder.add(
+      range.from,
+      range.to,
+      Decoration.replace({
+        widget: new MathWidget(range.expression, range.displayMode),
+        block: range.displayMode
+      })
+    );
+  }
+
+  return builder.finish();
+}
+
+function findMathRanges(content: string): MathRange[] {
+  const ranges: MathRange[] = [];
+  addMathMatches(content, ranges, /\$\$([\s\S]+?)\$\$/g, true);
+  addMathMatches(content, ranges, /\\\[([\s\S]+?)\\\]/g, true);
+  addMathMatches(content, ranges, /\\\(([\s\S]+?)\\\)/g, false);
+
+  const inlineDollar = /(^|[^\\])\$([^\n$]+?)\$/g;
+  for (const match of content.matchAll(inlineDollar)) {
+    if (match.index === undefined || !match[2]) {
+      continue;
+    }
+
+    const expression = match[2].trim();
+    if (!expression || expression.length !== match[2].length) {
+      continue;
+    }
+
+    const from = match.index + match[1]!.length;
+    const to = from + match[0].length - match[1]!.length;
+    addMathRange(ranges, {
+      from,
+      to,
+      expression,
+      displayMode: false
+    });
+  }
+
+  return ranges.sort((left, right) => left.from - right.from || left.to - right.to);
+}
+
+function addMathMatches(
+  content: string,
+  ranges: MathRange[],
+  pattern: RegExp,
+  displayMode: boolean
+): void {
+  for (const match of content.matchAll(pattern)) {
+    if (match.index === undefined || !match[1]) {
+      continue;
+    }
+
+    const expression = match[1].trim();
+    if (!expression) {
+      continue;
+    }
+
+    addMathRange(ranges, {
+      from: match.index,
+      to: match.index + match[0].length,
+      expression,
+      displayMode
+    });
+  }
+}
+
+function addMathRange(ranges: MathRange[], next: MathRange): void {
+  if (ranges.some((range) => rangesOverlap(range, next))) {
+    return;
+  }
+
+  ranges.push(next);
+}
+
+function rangesOverlap(left: MathRange, right: MathRange): boolean {
+  return left.from < right.to && right.from < left.to;
 }
 
 function resolveAsset(
@@ -395,6 +607,33 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function firstFiniteNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const number = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(number)) {
+      return number;
+    }
+  }
+
+  return null;
 }
 
 function filename(filePath: string): string {
