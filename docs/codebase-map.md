@@ -277,7 +277,9 @@ This is another critical split.
 
 The app is intentionally read-only. It stores last opened room/file in cookies and lazy-loads the
 current Markdown/Excalidraw content instead of preloading all notes. Markdown uses read-only CRDT
-connections for live text and authenticated member cursors; public visitor awareness is filtered by
+connections for live text, renders a preview DOM instead of raw Markdown source, resolves embedded
+images through the public manifest asset map, and can render Obsidian Excalidraw plugin notes marked
+with `excalidraw-plugin: parsed`. Public visitor awareness is filtered by
 `src/services/realtime-service.ts`.
 
 ## Tests

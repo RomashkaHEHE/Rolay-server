@@ -1,4 +1,5 @@
 import { exportToSvg, restoreAppState, restoreElements } from "@excalidraw/excalidraw";
+import { decompressFromBase64 } from "lz-string";
 
 interface ExcalidrawScene {
   elements?: unknown[];
@@ -91,7 +92,7 @@ function parseExcalidrawScene(raw: string): ExcalidrawScene | null {
       const parsed = JSON.parse(candidate);
       const scene = normalizeScene(parsed);
       if (scene) {
-        return scene;
+        return applyMarkdownTextElements(scene, raw);
       }
     } catch {
       continue;
@@ -103,6 +104,18 @@ function parseExcalidrawScene(raw: string): ExcalidrawScene | null {
 
 function extractJsonCandidates(raw: string): string[] {
   const candidates: string[] = [];
+
+  for (const match of raw.matchAll(/```compressed-json\s*\n([\s\S]*?)```/gi)) {
+    const compressed = match[1]?.trim();
+    if (!compressed) {
+      continue;
+    }
+
+    const decompressed = decompressDrawingJson(compressed);
+    if (decompressed) {
+      candidates.push(decompressed);
+    }
+  }
 
   for (const match of raw.matchAll(/```(?:json|excalidraw|javascript|js)?\s*\n([\s\S]*?)```/gi)) {
     if (match[1]?.trim()) {
@@ -128,6 +141,15 @@ function extractJsonCandidates(raw: string): string[] {
   return [...new Set(candidates)];
 }
 
+function decompressDrawingJson(compressed: string): string | null {
+  const cleaned = compressed.replace(/\s+/g, "");
+  try {
+    return decompressFromBase64(cleaned);
+  } catch {
+    return null;
+  }
+}
+
 function normalizeScene(value: unknown): ExcalidrawScene | null {
   if (!isRecord(value)) {
     return null;
@@ -149,6 +171,58 @@ function normalizeScene(value: unknown): ExcalidrawScene | null {
   }
 
   return null;
+}
+
+function applyMarkdownTextElements(scene: ExcalidrawScene, raw: string): ExcalidrawScene {
+  const textElements = parseMarkdownTextElements(raw);
+  if (textElements.size === 0 || !Array.isArray(scene.elements)) {
+    return scene;
+  }
+
+  return {
+    ...scene,
+    elements: scene.elements.map((element) => {
+      if (!isRecord(element) || element.type !== "text" || typeof element.id !== "string") {
+        return element;
+      }
+
+      const text = textElements.get(element.id);
+      if (text === undefined) {
+        return element;
+      }
+
+      return {
+        ...element,
+        text,
+        rawText: text,
+        originalText: text
+      };
+    })
+  };
+}
+
+function parseMarkdownTextElements(raw: string): Map<string, string> {
+  const elements = new Map<string, string>();
+  const sectionStart = raw.search(/(^|\n)##?\s*Text Elements\s*(\n|$)/i);
+  if (sectionStart < 0) {
+    return elements;
+  }
+
+  const section = raw.slice(sectionStart).replace(/^[\s\S]*?##?\s*Text Elements\s*\n/i, "");
+  const sectionEnd = section.search(/(^|\n)##?\s*(Element Links|Embedded Files|Drawing)\s*(\n|$)/i);
+  const body = sectionEnd >= 0 ? section.slice(0, sectionEnd) : section;
+  const pattern = /([\s\S]*?)\s+\^([A-Za-z0-9_-]{8})\s*(?:\n{2,}|$)/g;
+  for (const match of body.matchAll(pattern)) {
+    const text = match[1]
+      ?.replace(/^%%\*\*\*>>>text element-link:.*?<<<\*\*\*%%\s*/gm, "")
+      .trim();
+    const id = match[2]?.trim();
+    if (id && text) {
+      elements.set(id, text);
+    }
+  }
+
+  return elements;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

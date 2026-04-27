@@ -12,11 +12,19 @@ interface PublicRoom {
   };
 }
 
+interface TreeNode {
+  name: string;
+  path: string;
+  folders: Map<string, TreeNode>;
+  files: PublicEntry[];
+}
+
 interface AppState {
   rooms: PublicRoom[];
   manifest: PublicManifest | null;
   roomId: string | null;
   entryId: string | null;
+  collapsedFolders: Set<string>;
   eventSource: EventSource | null;
   markdownViewer: MarkdownViewer | null;
 }
@@ -71,6 +79,7 @@ const state: AppState = {
   manifest: null,
   roomId: null,
   entryId: null,
+  collapsedFolders: new Set(),
   eventSource: null,
   markdownViewer: null
 };
@@ -113,14 +122,15 @@ async function loadRooms(): Promise<void> {
 async function selectRoom(workspaceId: string): Promise<void> {
   cleanupLiveDocument();
   state.roomId = workspaceId;
+  state.collapsedFolders = loadCollapsedFolders(workspaceId);
   setCookie("rolay_public_room", workspaceId);
   roomSelect.value = workspaceId;
   status.textContent = "Загружаю структуру комнаты...";
+  status.classList.remove("hidden");
   const manifest = await fetchJson<PublicManifest>(
     `/public/api/rooms/${encodeURIComponent(workspaceId)}/manifest`
   );
   state.manifest = manifest;
-  renderEntries();
   openEventStream(manifest);
 
   const savedEntryId = cookie("rolay_public_entry");
@@ -134,10 +144,13 @@ async function selectRoom(workspaceId: string): Promise<void> {
     manifest.entries.find((candidate) => candidate.kind === "excalidraw");
 
   if (!entry) {
+    renderEntries();
     showEmpty("В этой комнате пока нет публичных заметок.");
     return;
   }
 
+  expandAncestors(entry.path);
+  renderEntries();
   await selectEntry(entry.id);
 }
 
@@ -150,6 +163,12 @@ async function refreshManifest(): Promise<void> {
     `/public/api/rooms/${encodeURIComponent(state.roomId)}/manifest`
   );
   state.manifest = manifest;
+  if (state.entryId) {
+    const active = manifest.entries.find((entry) => entry.id === state.entryId);
+    if (active) {
+      expandAncestors(active.path);
+    }
+  }
   renderEntries();
   state.markdownViewer?.updateAssets(manifest.assets);
   if (state.entryId && !manifest.entries.some((entry) => entry.id === state.entryId)) {
@@ -173,6 +192,7 @@ async function selectEntry(entryId: string): Promise<void> {
   cleanupLiveDocument();
   state.entryId = entryId;
   setCookie("rolay_public_entry", entryId);
+  expandAncestors(entry.path);
   renderEntries();
   title.textContent = filename(entry.path);
   eyebrow.textContent = entry.path;
@@ -274,23 +294,140 @@ function renderEntries(): void {
     return;
   }
 
-  for (const entry of manifest.entries) {
-    if (entry.kind === "folder") {
-      continue;
-    }
+  const root = buildTree(manifest.entries);
+  renderTreeNode(root, 0);
+}
+
+function renderTreeNode(node: TreeNode, level: number): void {
+  const folders = [...node.folders.values()].sort((left, right) =>
+    left.name.localeCompare(right.name, "ru")
+  );
+  const files = [...node.files].sort((left, right) =>
+    filename(left.path).localeCompare(filename(right.path), "ru")
+  );
+
+  for (const folder of folders) {
+    const collapsed = state.collapsedFolders.has(folder.path);
     const button = document.createElement("button");
-    button.className = `entry ${entry.id === state.entryId ? "active" : ""}`;
+    button.className = "entry folder-entry";
     button.type = "button";
-    button.style.paddingLeft = `${12 + depth(entry.path) * 14}px`;
+    button.style.paddingLeft = `${10 + level * 16}px`;
+    button.setAttribute("aria-expanded", String(!collapsed));
     button.innerHTML = `
-      <span class="entry-kind">${entry.kind === "markdown" ? "md" : "draw"}</span>
-      <span>${escapeHtml(filename(entry.path))}</span>
+      <span class="folder-caret">${collapsed ? "▸" : "▾"}</span>
+      <span class="entry-kind">dir</span>
+      <span class="entry-label">${escapeHtml(folder.name)}</span>
     `;
     button.addEventListener("click", () => {
-      void selectEntry(entry.id);
+      if (collapsed) {
+        state.collapsedFolders.delete(folder.path);
+      } else {
+        state.collapsedFolders.add(folder.path);
+      }
+      saveCollapsedFolders();
+      renderEntries();
+    });
+    entryList.append(button);
+
+    if (!collapsed) {
+      renderTreeNode(folder, level + 1);
+    }
+  }
+
+  for (const file of files) {
+    const button = document.createElement("button");
+    button.className = `entry file-entry ${file.id === state.entryId ? "active" : ""}`;
+    button.type = "button";
+    button.style.paddingLeft = `${32 + level * 16}px`;
+    button.innerHTML = `
+      <span class="entry-kind">${file.kind === "markdown" ? "md" : "draw"}</span>
+      <span class="entry-label">${escapeHtml(filename(file.path))}</span>
+    `;
+    button.addEventListener("click", () => {
+      void selectEntry(file.id);
     });
     entryList.append(button);
   }
+}
+
+function buildTree(entries: PublicEntry[]): TreeNode {
+  const root: TreeNode = {
+    name: "",
+    path: "",
+    folders: new Map(),
+    files: []
+  };
+
+  for (const entry of entries) {
+    const parts = normalizePath(entry.path).split("/").filter(Boolean);
+    if (parts.length === 0) {
+      continue;
+    }
+
+    if (entry.kind === "folder") {
+      ensureFolder(root, parts);
+      continue;
+    }
+
+    let parent = root;
+    for (const segment of parts.slice(0, -1)) {
+      parent = ensureFolder(parent, [segment]);
+    }
+    parent.files.push(entry);
+  }
+
+  return root;
+}
+
+function ensureFolder(root: TreeNode, segments: string[]): TreeNode {
+  let cursor = root;
+  for (const segment of segments) {
+    const path = cursor.path ? `${cursor.path}/${segment}` : segment;
+    let next = cursor.folders.get(segment);
+    if (!next) {
+      next = {
+        name: segment,
+        path,
+        folders: new Map(),
+        files: []
+      };
+      cursor.folders.set(segment, next);
+    }
+    cursor = next;
+  }
+  return cursor;
+}
+
+function expandAncestors(filePath: string): void {
+  const parts = normalizePath(filePath).split("/").filter(Boolean).slice(0, -1);
+  let current = "";
+  for (const part of parts) {
+    current = current ? `${current}/${part}` : part;
+    state.collapsedFolders.delete(current);
+  }
+  saveCollapsedFolders();
+}
+
+function loadCollapsedFolders(workspaceId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(`rolay_public_collapsed_${workspaceId}`);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed)
+      ? new Set(parsed.filter((value): value is string => typeof value === "string"))
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedFolders(): void {
+  if (!state.roomId) {
+    return;
+  }
+  localStorage.setItem(
+    `rolay_public_collapsed_${state.roomId}`,
+    JSON.stringify([...state.collapsedFolders])
+  );
 }
 
 function showEmpty(message: string): void {
@@ -314,8 +451,8 @@ function filename(filePath: string): string {
   return filePath.split("/").at(-1) ?? filePath;
 }
 
-function depth(filePath: string): number {
-  return Math.max(0, filePath.split("/").length - 1);
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 }
 
 function escapeHtml(value: string): string {
@@ -340,5 +477,9 @@ roomSelect.addEventListener("change", () => {
 });
 
 loadRooms().catch((error) => {
-  showEmpty(`Не получилось загрузить публичные конспекты: ${error instanceof Error ? error.message : String(error)}`);
+  showEmpty(
+    `Не получилось загрузить публичные конспекты: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  );
 });

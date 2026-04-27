@@ -76,10 +76,10 @@ If you start another substantial feature, create a new task file before leaving 
   switched public Excalidraw rendering to the official Excalidraw SVG export path with a lightweight
   canvas fallback.
 - Fixed public Markdown live viewing so read-only CRDT sessions receive live edits and member
-  awareness without publishing public visitor presence. Markdown source styling now highlights
-  headings, emphasis, links, inline code, and related syntax closer to Obsidian's source view.
-- Expanded public Excalidraw parsing for Obsidian Excalidraw plugin files marked with
-  `excalidraw-plugin: parsed`.
+  awareness without publishing public visitor presence.
+- Switched the public Markdown web viewer from source-style CodeMirror rendering to preview-style
+  HTML rendering with folders in the sidebar, KaTeX, callouts, common inline formatting, embedded
+  images, and Obsidian Excalidraw plugin notes marked with `excalidraw-plugin: parsed`.
 
 ## Where To Look First
 
@@ -124,6 +124,9 @@ For canonical protocol details:
   lets public viewers see member cursors without becoming collaborators themselves.
 - Public manifests intentionally do not list image files as tree entries; images are exposed only
   through the `assets` map for Markdown embeds.
+- Some published drawings may be stored as `kind="markdown"` when they predate first-class
+  Excalidraw entries. The public web viewer detects `excalidraw-plugin: parsed` frontmatter and
+  renders those Markdown-backed drawings client-side.
 - Keep the public web shell lightweight. Heavy readers such as Markdown+KaTeX and Excalidraw should
   remain lazy-loaded chunks rather than blocking `/`.
 - The plugin still needs UI wiring for publication toggles and public-link display; server support is

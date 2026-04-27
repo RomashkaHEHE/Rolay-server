@@ -195,6 +195,9 @@ The public web app deliberately uses a narrower contract than the authenticated 
 - public blob reads are limited to image binaries and Excalidraw blobs
 - public Markdown CRDT sessions are read-only; inbound public awareness is treated as an awareness
   query so visitors can see member cursors without publishing visitor presence
+- the bundled web viewer renders Markdown as preview HTML rather than source text, with support for
+  KaTeX math, callouts, common inline formatting, embedded images from the manifest `assets` map,
+  and Obsidian Excalidraw plugin notes marked with `excalidraw-plugin: parsed`
 
 Disabling publication invalidates public CRDT tokens and closes room Markdown connections. Private
 plugin clients can reconnect with normal authenticated tokens.
