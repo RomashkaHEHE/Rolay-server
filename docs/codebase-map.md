@@ -70,7 +70,15 @@ Each route module is intentionally thin. If you need actual behavior, jump from 
   - room list
   - room creation
   - participant room members list
+  - publication get/toggle
   - both `/v1/workspaces` and `/v1/rooms` aliases
+
+- `src/modules/public-api/public-api.routes.ts`
+  - unauthenticated published room list
+  - public manifest
+  - public room event SSE
+  - public read-only Markdown CRDT token
+  - public image/Excalidraw blob content
 
 - `src/modules/note-presence/note-presence.routes.ts`
   - room note-presence SSE stream
@@ -122,6 +130,7 @@ Most business logic lives here.
 
 - `src/services/workspace-service.ts`
   - room membership and invite logic
+  - room publication state
   - tree snapshot
   - batch ops
   - tree conflict handling
@@ -137,8 +146,15 @@ Most business logic lives here.
 - `src/services/realtime-service.ts`
   - `Hocuspocus` integration
   - Markdown-only websocket auth
+  - public read-only Markdown token auth
   - load/store of Yjs document state
   - awareness hook feeding note presence aggregation
+
+- `src/services/public-access-service.ts`
+  - public room list and manifest shaping
+  - public asset map generation for embedded images
+  - public read-only CRDT token issuance
+  - public blob allowlist checks
 
 - `src/services/note-presence-service.ts`
   - room-level live note presence aggregation
@@ -162,6 +178,7 @@ Most business logic lives here.
 
 - `src/services/settings-events-service.ts`
   - settings/admin SSE event publication and visibility filtering
+  - room publication update events
 
 - `src/services/storage-service.ts`
   - local or MinIO-backed object/document persistence
@@ -213,6 +230,14 @@ This matters a lot.
 
 Do not confuse them.
 
+### Public Room SSE
+
+- implementation: `src/modules/public-api/public-api.routes.ts`
+- state source: `src/services/public-access-service.ts`
+- scope: one published room
+- payloads: safe tree/blob/publication events only
+- no auth, no management data, no invite/member payloads
+
 ## Markdown Vs Binary
 
 This is another critical split.
@@ -242,6 +267,17 @@ This is another critical split.
 - persistent serialized file: blob flow
 - live scene state: drawing websocket + stored reconnect snapshot
 
+### Public web app
+
+- source: `public-web/src/main.ts`
+- styles: `public-web/src/styles.css`
+- build config: `public-web/vite.config.ts`
+- served by: `src/modules/root/root.routes.ts`
+- production copy: `Dockerfile`
+
+The app is intentionally read-only. It stores last opened room/file in cookies and lazy-loads the
+current Markdown/Excalidraw content instead of preloading all notes.
+
 ## Tests
 
 - `test/app.test.ts`
@@ -258,6 +294,7 @@ This file is long, but it is the best executable overview of what the server cur
 - CRDT websocket sync
 - note presence SSE
 - note read-state SSE
+- public read-only publication API
 - markdown bootstrap
 
 If you are unsure whether a behavior is intentional, search this file first.

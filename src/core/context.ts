@@ -5,6 +5,7 @@ import { FileService } from "../services/file-service";
 import { MemoryState } from "../services/memory-state";
 import { NotePresenceService } from "../services/note-presence-service";
 import { NoteReadStateService } from "../services/note-read-state-service";
+import { PublicAccessService } from "../services/public-access-service";
 import { SettingsEventsService } from "../services/settings-events-service";
 import { createStateStore, StateStore } from "../services/state-store";
 import { StorageService } from "../services/storage-service";
@@ -21,6 +22,7 @@ export interface RolayContext {
   settingsEvents: SettingsEventsService;
   notePresence: NotePresenceService;
   noteReadState: NoteReadStateService;
+  publicAccess: PublicAccessService;
   storage: StorageService;
 }
 
@@ -35,6 +37,7 @@ export async function createRolayContext(env: AppEnv): Promise<RolayContext> {
   const workspaces = new WorkspaceService(state, stateStore, settingsEvents);
   const files = new FileService(state, env, storage, stateStore);
   const drawings = new DrawingService(state, env, storage);
+  const publicAccess = new PublicAccessService(state, env, storage);
 
   await auth.ensureReady();
 
@@ -49,6 +52,7 @@ export async function createRolayContext(env: AppEnv): Promise<RolayContext> {
     settingsEvents,
     notePresence,
     noteReadState,
+    publicAccess,
     storage
   };
 }

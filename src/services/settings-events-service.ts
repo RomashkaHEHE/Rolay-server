@@ -32,6 +32,10 @@ interface RoomListItem {
   createdAt: string;
   memberCount: number;
   inviteEnabled: boolean;
+  publication: {
+    enabled: boolean;
+    updatedAt: string;
+  };
 }
 
 interface AdminRoomListItem extends RoomListItem {
@@ -47,6 +51,12 @@ interface RoomMemberRecord {
 interface InviteView {
   workspaceId: string;
   code: string;
+  enabled: boolean;
+  updatedAt: string;
+}
+
+interface PublicationView {
+  workspaceId: string;
   enabled: boolean;
   updatedAt: string;
 }
@@ -293,6 +303,24 @@ export class SettingsEventsService {
     });
   }
 
+  publishRoomPublicationUpdated(workspaceId: string): void {
+    const workspace = this.state.workspaces.get(workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    this.publishEvent({
+      type: "room.publication.updated",
+      scope: "room.publication",
+      payload: {
+        workspaceId,
+        publication: this.toPublicationView(workspace)
+      },
+      targetUserIds: [...workspace.memberships.keys()],
+      includeAdmins: true
+    });
+  }
+
   publishRoomMembersUpdated(workspaceId: string): void {
     const workspace = this.state.workspaces.get(workspaceId);
     if (!workspace) {
@@ -394,7 +422,8 @@ export class SettingsEventsService {
       membershipRole: membership.role,
       createdAt: workspace.createdAt,
       memberCount: workspace.memberships.size,
-      inviteEnabled: workspace.invite.enabled
+      inviteEnabled: workspace.invite.enabled,
+      publication: cloneValue(workspace.publication)
     };
   }
 
@@ -405,6 +434,7 @@ export class SettingsEventsService {
       createdAt: workspace.createdAt,
       memberCount: workspace.memberships.size,
       inviteEnabled: workspace.invite.enabled,
+      publication: cloneValue(workspace.publication),
       ownerCount: [...workspace.memberships.values()].filter(
         (membership) => membership.role === "owner"
       ).length
@@ -417,6 +447,14 @@ export class SettingsEventsService {
       code: workspace.invite.code,
       enabled: workspace.invite.enabled,
       updatedAt: workspace.invite.updatedAt
+    };
+  }
+
+  private toPublicationView(workspace: StoredWorkspace): PublicationView {
+    return {
+      workspaceId: workspace.workspace.id,
+      enabled: workspace.publication.enabled,
+      updatedAt: workspace.publication.updatedAt
     };
   }
 

@@ -131,6 +131,18 @@ async function openSseStream(url: string, accessToken: string): Promise<SseStrea
   };
 }
 
+async function openPublicSseStream(url: string): Promise<SseStream> {
+  const response = await fetch(url);
+
+  assert.equal(response.status, 200);
+  assert.ok(response.body);
+  return {
+    reader: response.body.getReader(),
+    decoder: new TextDecoder(),
+    buffer: ""
+  };
+}
+
 async function readNextSseMessage(stream: SseStream, timeoutMs = 2000): Promise<SseMessage> {
   const startedAt = Date.now();
 
@@ -373,6 +385,10 @@ test("memory state snapshot round-trip preserves persisted records", async () =>
     },
     createdBy: user.id,
     createdAt: "2026-01-01T00:00:00.000Z",
+    publication: {
+      enabled: false,
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    },
     invite: {
       code: "invite-code",
       enabled: true,
@@ -465,6 +481,28 @@ test("GET /ready returns health payload", async () => {
     ok: true,
     service: "rolay-server"
   });
+
+  await app.close();
+});
+
+test("GET / serves the public read-only site shell", async () => {
+  const app = await buildApp({ logger: false });
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/"
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.match(String(response.headers["content-type"]), /text\/html/);
+  assert.match(response.body, /Rolay Public Notes/);
+
+  const readyResponse = await app.inject({
+    method: "GET",
+    url: "/ready"
+  });
+
+  assert.equal(readyResponse.statusCode, 200);
 
   await app.close();
 });
@@ -2772,6 +2810,430 @@ test("room note presence SSE reflects markdown awareness without requiring selec
   assert.deepEqual(afterSecondDisconnect.payload.viewers, []);
 
   await presenceStream.reader.cancel();
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("room publication exposes only safe read-only public manifest and blobs", async () => {
+  const env = createTestEnv();
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+  await app.rolay.auth.upsertUser({
+    username: "reader1",
+    password: "secret",
+    displayName: "Reader One",
+    globalRole: "reader"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const readerSession = await loginAs(app, "reader1", "secret", "reader-laptop");
+  const createRoomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Published Calculus"
+    }
+  });
+
+  assert.equal(createRoomResponse.statusCode, 201);
+  const roomId = createRoomResponse.json().workspace.id;
+
+  const privateRoomsResponse = await app.inject({
+    method: "GET",
+    url: "/public/api/rooms"
+  });
+
+  assert.equal(privateRoomsResponse.statusCode, 200);
+  assert.deepEqual(privateRoomsResponse.json(), {
+    rooms: []
+  });
+
+  const inviteResponse = await app.inject({
+    method: "GET",
+    url: `/v1/rooms/${roomId}/invite`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    }
+  });
+  assert.equal(inviteResponse.statusCode, 200);
+
+  const joinResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms/join",
+    headers: {
+      authorization: `Bearer ${readerSession.accessToken}`
+    },
+    payload: {
+      code: inviteResponse.json().invite.code
+    }
+  });
+  assert.equal(joinResponse.statusCode, 200);
+
+  const readerPublicationAttempt = await app.inject({
+    method: "PATCH",
+    url: `/v1/rooms/${roomId}/publication`,
+    headers: {
+      authorization: `Bearer ${readerSession.accessToken}`
+    },
+    payload: {
+      enabled: true
+    }
+  });
+  assert.equal(readerPublicationAttempt.statusCode, 403);
+
+  const publishResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/rooms/${roomId}/publication`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      enabled: true
+    }
+  });
+  assert.equal(publishResponse.statusCode, 200);
+  assert.equal(publishResponse.json().publication.enabled, true);
+
+  const createEntriesResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_public_folder",
+          type: "create_folder",
+          path: "Lecture"
+        },
+        {
+          opId: "op_public_markdown",
+          type: "create_markdown",
+          path: "Lecture/Week-01.md"
+        },
+        {
+          opId: "op_public_image",
+          type: "create_binary_placeholder",
+          path: "Images/graph.png"
+        },
+        {
+          opId: "op_public_txt",
+          type: "create_binary_placeholder",
+          path: "Files/raw.txt"
+        },
+        {
+          opId: "op_public_drawing",
+          type: "create_excalidraw",
+          path: "Boards/Figure.excalidraw.md"
+        }
+      ]
+    }
+  });
+  assert.equal(createEntriesResponse.statusCode, 200);
+
+  const entries = createEntriesResponse.json().results.map((result: { entry: Record<string, unknown> }) => result.entry);
+  const imageEntry = entries.find((entry: { path: string }) => entry.path === "Images/graph.png");
+  const txtEntry = entries.find((entry: { path: string }) => entry.path === "Files/raw.txt");
+  const drawingEntry = entries.find((entry: { path: string }) => entry.path === "Boards/Figure.excalidraw.md");
+  assert.ok(imageEntry);
+  assert.ok(txtEntry);
+  assert.ok(drawingEntry);
+
+  const imagePayload = Buffer.from("fake-png-payload");
+  const textPayload = Buffer.from("internal text");
+  const drawingPayload = Buffer.from('{"type":"excalidraw","elements":[]}', "utf8");
+  const imageHash = createSha256Hash(imagePayload);
+  const textHash = createSha256Hash(textPayload);
+  const drawingHash = createSha256Hash(drawingPayload);
+
+  await app.rolay.storage.storeBlob(imageHash, imagePayload, "image/png");
+  await app.rolay.storage.storeBlob(textHash, textPayload, "text/plain");
+  await app.rolay.storage.storeBlob(drawingHash, drawingPayload, "text/markdown");
+
+  const commitResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_commit_public_image",
+          type: "commit_blob_revision",
+          entryId: imageEntry.id,
+          hash: imageHash,
+          sizeBytes: imagePayload.byteLength,
+          mimeType: "image/png",
+          preconditions: {
+            entryVersion: imageEntry.entryVersion
+          }
+        },
+        {
+          opId: "op_commit_public_txt",
+          type: "commit_blob_revision",
+          entryId: txtEntry.id,
+          hash: textHash,
+          sizeBytes: textPayload.byteLength,
+          mimeType: "text/plain",
+          preconditions: {
+            entryVersion: txtEntry.entryVersion
+          }
+        },
+        {
+          opId: "op_commit_public_drawing",
+          type: "commit_blob_revision",
+          entryId: drawingEntry.id,
+          hash: drawingHash,
+          sizeBytes: drawingPayload.byteLength,
+          mimeType: "text/markdown",
+          preconditions: {
+            entryVersion: drawingEntry.entryVersion
+          }
+        }
+      ]
+    }
+  });
+  assert.equal(commitResponse.statusCode, 200);
+
+  const publicRoomsResponse = await app.inject({
+    method: "GET",
+    url: "/public/api/rooms"
+  });
+  assert.equal(publicRoomsResponse.statusCode, 200);
+  assert.equal(publicRoomsResponse.json().rooms.length, 1);
+  assert.equal(publicRoomsResponse.json().rooms[0].workspace.name, "Published Calculus");
+
+  const manifestResponse = await app.inject({
+    method: "GET",
+    url: `/public/api/rooms/${roomId}/manifest`
+  });
+  assert.equal(manifestResponse.statusCode, 200);
+  const manifest = manifestResponse.json();
+  assert.ok(manifest.entries.some((entry: { kind: string; path: string }) => entry.kind === "markdown" && entry.path === "Lecture/Week-01.md"));
+  assert.ok(manifest.entries.some((entry: { kind: string; path: string }) => entry.kind === "excalidraw" && entry.path === "Boards/Figure.excalidraw.md"));
+  assert.ok(!manifest.entries.some((entry: { path: string }) => entry.path === "Images/graph.png"));
+  assert.ok(!manifest.entries.some((entry: { path: string }) => entry.path === "Files/raw.txt"));
+  assert.equal(manifest.assets["Images/graph.png"].entryId, imageEntry.id);
+  assert.equal(manifest.assets["graph.png"].entryId, imageEntry.id);
+  assert.equal(manifest.assets["Files/raw.txt"], undefined);
+
+  const imageResponse = await app.inject({
+    method: "GET",
+    url: `/public/api/rooms/${roomId}/files/${imageEntry.id}/blob/content?hash=${encodeURIComponent(imageHash)}`
+  });
+  assert.equal(imageResponse.statusCode, 200);
+  assert.equal(imageResponse.headers["content-type"], "image/png");
+  assert.equal(imageResponse.body, imagePayload.toString("utf8"));
+
+  const txtResponse = await app.inject({
+    method: "GET",
+    url: `/public/api/rooms/${roomId}/files/${txtEntry.id}/blob/content?hash=${encodeURIComponent(textHash)}`
+  });
+  assert.equal(txtResponse.statusCode, 404);
+
+  const drawingResponse = await app.inject({
+    method: "GET",
+    url: `/public/api/rooms/${roomId}/files/${drawingEntry.id}/blob/content?hash=${encodeURIComponent(drawingHash)}`
+  });
+  assert.equal(drawingResponse.statusCode, 200);
+  assert.equal(drawingResponse.body, drawingPayload.toString("utf8"));
+
+  const settingsEvents = app.rolay.settingsEvents.listEventsSince(
+    app.rolay.auth.authenticateAccessToken(writerSession.accessToken).user,
+    0
+  );
+  assert.ok(
+    settingsEvents.some(
+      (event) =>
+        event.type === "room.publication.updated" &&
+        event.scope === "room.publication"
+    )
+  );
+
+  const unpublishResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/rooms/${roomId}/publication`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      enabled: false
+    }
+  });
+  assert.equal(unpublishResponse.statusCode, 200);
+
+  const afterUnpublishManifestResponse = await app.inject({
+    method: "GET",
+    url: `/public/api/rooms/${roomId}/manifest`
+  });
+  assert.equal(afterUnpublishManifestResponse.statusCode, 404);
+
+  await app.close();
+  await cleanupTestEnv(env);
+});
+
+test("public markdown CRDT token is read-only and does not publish public presence", async () => {
+  const env = createTestEnv({
+    crdtStoreDebounceMs: 50,
+    crdtStoreMaxDebounceMs: 100
+  });
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+
+  await app.rolay.auth.upsertUser({
+    username: "writer1",
+    password: "secret",
+    displayName: "Writer One",
+    globalRole: "writer"
+  });
+
+  const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+  const createRoomResponse = await app.inject({
+    method: "POST",
+    url: "/v1/rooms",
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      name: "Read Only Room"
+    }
+  });
+  assert.equal(createRoomResponse.statusCode, 201);
+  const roomId = createRoomResponse.json().workspace.id;
+
+  const createEntryResponse = await app.inject({
+    method: "POST",
+    url: `/v1/workspaces/${roomId}/ops/batch`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      deviceId: "writer-device-1",
+      operations: [
+        {
+          opId: "op_public_readonly_markdown",
+          type: "create_markdown",
+          path: "Week-01.md"
+        }
+      ]
+    }
+  });
+  assert.equal(createEntryResponse.statusCode, 200);
+  const markdownEntry = createEntryResponse.json().results[0].entry;
+
+  const publishResponse = await app.inject({
+    method: "PATCH",
+    url: `/v1/rooms/${roomId}/publication`,
+    headers: {
+      authorization: `Bearer ${writerSession.accessToken}`
+    },
+    payload: {
+      enabled: true
+    }
+  });
+  assert.equal(publishResponse.statusCode, 200);
+
+  const publicTokenResponse = await app.inject({
+    method: "POST",
+    url: `/public/api/rooms/${roomId}/markdown/${markdownEntry.id}/crdt-token`
+  });
+  assert.equal(publicTokenResponse.statusCode, 200);
+  assert.equal(publicTokenResponse.json().readOnly, true);
+
+  await app.listen({
+    host: "127.0.0.1",
+    port: 0
+  });
+  const address = app.server.address();
+  assert.ok(address && typeof address === "object");
+  const wsUrl = `ws://127.0.0.1:${address.port}/v1/crdt`;
+  (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
+
+  const publicDoc = new Y.Doc();
+  let publicSynced = false;
+  const publicProvider = new HocuspocusProvider({
+    url: wsUrl,
+    name: markdownEntry.docId,
+    document: publicDoc,
+    token: publicTokenResponse.json().token,
+    onSynced: ({ state }) => {
+      if (state) {
+        publicSynced = true;
+      }
+    }
+  });
+  await waitFor(() => publicSynced);
+
+  publicDoc.getText("content").insert(0, "malicious edit");
+  publicProvider.setAwarenessField("user", {
+    userId: "public",
+    displayName: "Public Visitor",
+    color: "#ffffff"
+  });
+  publicProvider.setAwarenessField("selection", {
+    anchor: 0,
+    head: 1
+  });
+  await sleep(250);
+
+  const storedDocument = await app.rolay.storage.loadDocument(markdownEntry.docId);
+  if (storedDocument) {
+    const persistedDoc = new Y.Doc();
+    Y.applyUpdate(persistedDoc, storedDocument);
+    assert.equal(persistedDoc.getText("content").toString(), "");
+  }
+
+  const presenceSnapshot = app.rolay.notePresence.getSnapshot(roomId);
+  assert.deepEqual(presenceSnapshot, {
+    workspaceId: roomId,
+    notes: []
+  });
+
+  publicProvider.destroy();
+  publicDoc.destroy();
+
+  const secondTokenResponse = await app.inject({
+    method: "POST",
+    url: `/public/api/rooms/${roomId}/markdown/${markdownEntry.id}/crdt-token`
+  });
+  assert.equal(secondTokenResponse.statusCode, 200);
+
+  const freshPublicDoc = new Y.Doc();
+  let freshSynced = false;
+  const freshProvider = new HocuspocusProvider({
+    url: wsUrl,
+    name: markdownEntry.docId,
+    document: freshPublicDoc,
+    token: secondTokenResponse.json().token,
+    onSynced: ({ state }) => {
+      if (state) {
+        freshSynced = true;
+      }
+    }
+  });
+  await waitFor(() => freshSynced);
+  assert.equal(freshPublicDoc.getText("content").toString(), "");
+
+  freshProvider.destroy();
+  freshPublicDoc.destroy();
   await app.close();
   await cleanupTestEnv(env);
 });

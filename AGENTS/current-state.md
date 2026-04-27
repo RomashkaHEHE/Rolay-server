@@ -13,6 +13,7 @@ Current core stack:
 - server-authoritative room tree
 - blob-based sync for non-Markdown files
 - single-editor live Excalidraw sessions
+- public read-only room publishing and bundled web viewer
 - state persistence via in-memory or PostgreSQL snapshot store
 - object/document storage via local disk or MinIO-compatible backend
 
@@ -30,6 +31,8 @@ Current core stack:
 - The file tree is server-authoritative, not CRDT-based.
 - Binary and Excalidraw file revisions become visible to other users only after
   `commit_blob_revision`.
+- Rooms are private by default; public read-only publication must stay explicitly opt-in.
+- Public web visitors must never get write-capable CRDT access or appear as collaborators.
 - Room tree SSE, settings SSE, note presence SSE, and note read-state SSE are separate systems with
   different purposes.
 - Backward compatibility matters: do not turn previously optional client data into required runtime
@@ -53,6 +56,8 @@ If you start another substantial feature, create a new task file before leaving 
 - Added resumable authenticated blob upload/download flows with progress metadata and cancel
   support.
 - Added live Excalidraw support with single-editor lease semantics and reconnect snapshot storage.
+- Added public read-only room publishing, public manifest/blob/CRDT APIs, and the bundled dark web
+  viewer served from `/`.
 
 ## Where To Look First
 
@@ -61,6 +66,13 @@ For room, invite, or membership behavior:
 - [src/modules/workspaces/workspaces.routes.ts](../src/modules/workspaces/workspaces.routes.ts)
 - [src/modules/invites/invites.routes.ts](../src/modules/invites/invites.routes.ts)
 - [src/services/workspace-service.ts](../src/services/workspace-service.ts)
+
+For public read-only website behavior:
+
+- [src/modules/public-api/public-api.routes.ts](../src/modules/public-api/public-api.routes.ts)
+- [src/modules/root/root.routes.ts](../src/modules/root/root.routes.ts)
+- [src/services/public-access-service.ts](../src/services/public-access-service.ts)
+- [public-web/src/main.ts](../public-web/src/main.ts)
 
 For Markdown realtime, note presence, or note read-state:
 
@@ -84,6 +96,10 @@ For canonical protocol details:
 
 - Old plugin builds may still rely on legacy behavior around note presence and ticket-based blob
   flows.
+- Public CRDT tokens must remain read-only; do not reuse authenticated member tokens for public
+  website traffic.
+- Public manifests intentionally do not list image files as tree entries; images are exposed only
+  through the `assets` map for Markdown embeds.
 - `docs/*` should remain factual; do not dump unfinished-task memory there.
 - If you touch a protocol edge used by the plugin, update:
   - the task file, if the work is ongoing

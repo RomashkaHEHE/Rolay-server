@@ -10,10 +10,12 @@ import {
   NoteContentVersionRecord,
   NoteReadStateRecord,
   OperationResult,
+  PublicCrdtTokenRecord,
   RefreshTokenRecord,
   StoredSettingsEvent,
   StoredUser,
   Workspace,
+  WorkspacePublication,
   WorkspaceInvite,
   WorkspaceEvent
 } from "../domain/types";
@@ -38,6 +40,7 @@ export interface StoredWorkspaceSnapshot {
   workspace: Workspace;
   createdBy: string;
   createdAt: string;
+  publication?: WorkspacePublication;
   memberships: Membership[];
   invite?: WorkspaceInvite;
   invites?: Array<{ code: string }>;
@@ -48,7 +51,7 @@ export interface StoredWorkspaceSnapshot {
 }
 
 export interface MemoryStateSnapshot {
-  version: 1 | 2 | 3 | 4 | 5;
+  version: 1 | 2 | 3 | 4 | 5 | 6;
   users: StoredUser[];
   devices: DeviceSession[];
   accessTokens: AccessTokenRecord[];
@@ -68,6 +71,7 @@ export interface StoredWorkspace {
   workspace: Workspace;
   createdBy: string;
   createdAt: string;
+  publication: WorkspacePublication;
   memberships: Map<string, Membership>;
   invite: WorkspaceInvite;
   entries: Map<string, FileEntry>;
@@ -86,6 +90,7 @@ export class MemoryState {
   public readonly workspaces = new Map<string, StoredWorkspace>();
   public readonly blobObjects = new Map<string, BlobObject>();
   public readonly crdtTokens = new Map<string, CrdtTokenRecord>();
+  public readonly publicCrdtTokens = new Map<string, PublicCrdtTokenRecord>();
   public readonly blobUploadTickets = new Map<string, BlobUploadTicketRecord>();
   public readonly blobDownloadTickets = new Map<string, BlobDownloadTicketRecord>();
   public readonly settingsEvents: StoredSettingsEvent[] = [];
@@ -127,6 +132,10 @@ export class MemoryState {
         workspace: workspaceSnapshot.workspace,
         createdBy: workspaceSnapshot.createdBy,
         createdAt: workspaceSnapshot.createdAt,
+        publication: workspaceSnapshot.publication ?? {
+          enabled: false,
+          updatedAt: workspaceSnapshot.createdAt
+        },
         memberships: new Map(
           workspaceSnapshot.memberships.map((membership) => [membership.userId, membership])
         ),
@@ -192,7 +201,7 @@ export class MemoryState {
 
   toSnapshot(): MemoryStateSnapshot {
     return {
-      version: 5,
+      version: 6,
       users: [...this.users.values()].map((user) => ({
         ...user,
         isAdmin: Boolean(user.isAdmin)
@@ -204,6 +213,7 @@ export class MemoryState {
         workspace: workspace.workspace,
         createdBy: workspace.createdBy,
         createdAt: workspace.createdAt,
+        publication: workspace.publication,
         memberships: [...workspace.memberships.values()],
         invite: workspace.invite,
         entries: [...workspace.entries.values()],

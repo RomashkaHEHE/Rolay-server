@@ -113,7 +113,7 @@ export class NotePresenceService {
     return viewers.some((viewer) => viewer.userId === userId);
   }
 
-  private getSnapshot(workspaceId: string): NotePresenceSnapshot {
+  getSnapshot(workspaceId: string): NotePresenceSnapshot {
     const workspace = this.requireWorkspace(workspaceId);
     const notes = [...(this.workspaceNotes.get(workspaceId)?.entries() ?? [])]
       .filter(([entryId, viewers]) => viewers.length > 0 && this.isActiveMarkdownEntry(workspaceId, entryId))

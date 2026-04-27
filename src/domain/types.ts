@@ -43,6 +43,11 @@ export interface Workspace {
   name: string;
 }
 
+export interface WorkspacePublication {
+  enabled: boolean;
+  updatedAt: string;
+}
+
 export interface Membership {
   userId: string;
   role: WorkspaceRole;
@@ -94,6 +99,7 @@ export type SettingsEventScope =
   | "rooms"
   | "room.members"
   | "room.invite"
+  | "room.publication"
   | "admin.users"
   | "admin.rooms"
   | "admin.room.members";
@@ -170,6 +176,14 @@ export interface CrdtTokenRecord {
   docId: string;
   userId: string;
   role: WorkspaceRole;
+  expiresAt: string;
+}
+
+export interface PublicCrdtTokenRecord {
+  token: string;
+  workspaceId: string;
+  entryId: string;
+  docId: string;
   expiresAt: string;
 }
 

@@ -12,7 +12,16 @@ single-editor Excalidraw live sessions, room tree sync, and blob-based attachmen
   `GET /v1/rooms`,
   `POST /v1/rooms`,
   `GET /v1/rooms/:workspaceId/members`,
+  `GET /v1/rooms/:workspaceId/publication`,
+  `PATCH /v1/rooms/:workspaceId/publication`,
   `POST /v1/rooms/join`
+- live public read-only site: `GET /`
+- live public read-only API:
+  `GET /public/api/rooms`,
+  `GET /public/api/rooms/:workspaceId/manifest`,
+  `GET /public/api/rooms/:workspaceId/events`,
+  `POST /public/api/rooms/:workspaceId/markdown/:entryId/crdt-token`,
+  `GET /public/api/rooms/:workspaceId/files/:entryId/blob/content`
 - live room invite endpoints:
   `GET /v1/rooms/:workspaceId/invite`,
   `PATCH /v1/rooms/:workspaceId/invite`,
@@ -66,6 +75,9 @@ single-editor Excalidraw live sessions, room tree sync, and blob-based attachmen
 - Excalidraw drawings use first-class `kind="excalidraw"` entries with blob persistence plus
   single-editor live scene broadcast
 - room tree state is server-authoritative, not CRDT-based
+- room publication is opt-in; rooms are private by default and only owner/admin can toggle public read-only access
+- public read-only Markdown uses short-lived read-only CRDT tokens and does not publish visitor presence
+- public manifests show folders, Markdown notes, and Excalidraw files; image blobs are exposed only as assets for embedded Markdown images
 - binary files are synced as blob objects addressed by `sha256`
 - server accepts `sha256` digests in hex or base64 form and normalizes them to canonical base64 in API responses and persisted state
 - binary uploads are staged and streamed through the server before `commit_blob_revision`
@@ -82,6 +94,7 @@ single-editor Excalidraw live sessions, room tree sync, and blob-based attachmen
 1. Copy `.env.example` to `.env`.
 2. Install dependencies with `npm install`.
 3. Start the app with `npm run dev`.
+4. Build the public web app with `npm run build:web` or build everything with `npm run build`.
 
 For a full local stack with `PostgreSQL` and `MinIO`, use:
 
@@ -106,6 +119,7 @@ Managed accounts:
 - every user can change their own `displayName` via `PATCH /v1/auth/me/profile`
 - every room has one stable invite key that can be enabled/disabled without changing it
 - owners can regenerate the invite key, which invalidates the old one
+- room owners can publish/unpublish a room through `PATCH /v1/rooms/:workspaceId/publication`
 
 ## Runtime expectations
 

@@ -48,6 +48,12 @@ The server has five different synchronization layers:
    - editor pointer presence
    - persistent `.excalidraw.md` file remains blob-backed storage/fallback
 
+6. Public read-only publishing
+   - room owner/admin controlled `public/private` switch
+   - bundled dark web app served at `/`
+   - unauthenticated public API scoped only to published rooms
+   - read-only CRDT tokens for public Markdown viewing
+
 These layers are intentionally separate. Only Markdown content uses CRDT.
 
 ## Roles
@@ -114,6 +120,11 @@ The server uses seven transports:
    - `/v1/drawings`
    - used only for live Excalidraw single-editor sessions
 
+8. Public HTTP surface
+   - `/`
+   - `/public/api/...`
+   - used only for read-only room publication
+
 ## File Sync Design
 
 ### Markdown files
@@ -169,6 +180,24 @@ Live drawing collaboration is intentionally not multi-writer. The server keeps:
 Persistent file sync for the serialized drawing still uses the normal blob flow. Live scene state is
 stored separately for reconnect/viewer hydration and does not parse or merge the `.excalidraw.md`
 file on the server.
+
+### Public read-only rooms
+
+Room publication is stored on the room record as `publication.enabled` and
+`publication.updatedAt`. It is private by default and can be changed only by room owners or admins.
+
+The public web app deliberately uses a narrower contract than the authenticated plugin:
+
+- room list includes only published rooms
+- manifests include visible navigation entries for folders, Markdown notes, and Excalidraw files
+- image files are exposed only through an `assets` map so Markdown embeds can resolve them without
+  listing all binary files in the public tree
+- public blob reads are limited to image binaries and Excalidraw blobs
+- public Markdown CRDT sessions are read-only and reject non-empty public awareness so visitors do
+  not appear as collaborators
+
+Disabling publication invalidates public CRDT tokens and closes room Markdown connections. Private
+plugin clients can reconnect with normal authenticated tokens.
 
 ## Why the Tree Is Server-Authoritative
 

@@ -7,6 +7,7 @@ This document describes the current production deploy shape for Rolay Server.
 The repository uses GitHub Actions to:
 
 - build and test the server
+- build the bundled public read-only web app
 - build a Docker image
 - push the image to `GHCR`
 - connect to the VPS over SSH
@@ -99,6 +100,8 @@ Important current behavior:
 - the seeded admin account is read from `.env` during startup
 - changing `DEV_AUTH_PASSWORD` requires restarting the server to reseed the admin password
 - state is persisted through the configured state store, not through in-memory process state alone
+- the public web app is served by the same container at `/`, so the current `3000/tcp` rule is
+  enough until a reverse proxy/domain is added
 
 ## Recommended Next Infra Improvements
 

@@ -16,6 +16,7 @@ import filesRoutes from "./modules/files/files.routes";
 import invitesRoutes from "./modules/invites/invites.routes";
 import notePresenceRoutes from "./modules/note-presence/note-presence.routes";
 import noteReadStateRoutes from "./modules/note-read-state/note-read-state.routes";
+import publicApiRoutes from "./modules/public-api/public-api.routes";
 import rootRoutes from "./modules/root/root.routes";
 import settingsEventsRoutes from "./modules/settings-events/settings-events.routes";
 import storageRoutes from "./modules/storage/storage.routes";
@@ -68,9 +69,15 @@ export async function buildApp(
     app.rolay.storage,
     app.rolay.notePresence,
     app.rolay.noteReadState,
+    app.rolay.publicAccess,
     env,
     app.log
   );
+  app.rolay.workspaces.onPublicationChanged((workspaceId, enabled) => {
+    if (!enabled) {
+      realtime.closeWorkspaceConnections(workspaceId);
+    }
+  });
 
   app.addHook("onReady", async () => {
     await app.rolay.storage.ensureReady();
@@ -93,6 +100,7 @@ export async function buildApp(
   await app.register(workspacesRoutes);
   await app.register(notePresenceRoutes);
   await app.register(noteReadStateRoutes);
+  await app.register(publicApiRoutes);
   await app.register(treeRoutes);
   await app.register(drawingsRoutes);
   await app.register(filesRoutes);

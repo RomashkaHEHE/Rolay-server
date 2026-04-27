@@ -122,6 +122,22 @@ Rules:
 - room `owner` can manage invite state
 - `admin` can also inspect/manage through admin capabilities
 
+### Publication management
+
+- `GET /v1/rooms/{workspaceId}/publication`
+- `PATCH /v1/rooms/{workspaceId}/publication`
+
+Workspace aliases also exist under `/v1/workspaces/{workspaceId}/publication`.
+
+Rules:
+
+- rooms are private by default
+- only room `owner` or `admin` can inspect/toggle publication
+- publication state is `{ workspaceId, enabled, updatedAt }`
+- changing publication emits settings event `room.publication.updated`
+- disabling publication invalidates public CRDT tokens for that room and closes live Markdown
+  document connections so public viewers reconnect/fail closed
+
 ## Admin API
 
 ### Users
@@ -181,6 +197,92 @@ The settings stream is separate from room tree SSE.
 
 `room.members.updated` carries a full current room member snapshot and is emitted only to current
 participants of that room. Admin dashboards still receive `admin.room.members.updated`.
+
+`room.publication.updated` carries the current publication snapshot for room participants and
+admins.
+
+## Public Read-Only Site And API
+
+- `GET /`
+
+Serves the bundled dark public read-only web app.
+
+Public API endpoints do not require Bearer auth:
+
+- `GET /public/api/rooms`
+- `GET /public/api/rooms/{workspaceId}/manifest`
+- `GET /public/api/rooms/{workspaceId}/events?cursor=...`
+- `POST /public/api/rooms/{workspaceId}/markdown/{entryId}/crdt-token`
+- `GET /public/api/rooms/{workspaceId}/files/{entryId}/blob/content?hash=...`
+
+Rules:
+
+- only rooms with `publication.enabled=true` are visible
+- public manifests expose navigation entries for `folder`, `markdown`, and `excalidraw`
+- image files are not exposed as navigation entries; they appear only in the manifest `assets`
+  map for Markdown image resolution
+- public blob content is allowed only for `image/*` binary entries and Excalidraw entries
+- public Markdown CRDT tokens are short-lived and read-only
+- public visitors do not get durable accounts, cannot write document updates, and cannot publish
+  non-empty awareness/presence
+- public room events reuse room event sequence IDs but only expose safe tree/blob/publication
+  events
+
+Example public room list:
+
+```json
+{
+  "rooms": [
+    {
+      "workspace": {
+        "id": "ws_1",
+        "name": "Calculus"
+      },
+      "publication": {
+        "enabled": true,
+        "updatedAt": "2026-04-27T08:00:00.000Z"
+      }
+    }
+  ]
+}
+```
+
+Example public manifest:
+
+```json
+{
+  "workspace": {
+    "id": "ws_1",
+    "name": "Calculus"
+  },
+  "publication": {
+    "enabled": true,
+    "updatedAt": "2026-04-27T08:00:00.000Z"
+  },
+  "cursor": 42,
+  "entries": [
+    {
+      "id": "fil_note",
+      "path": "Week-01.md",
+      "kind": "markdown",
+      "contentMode": "crdt",
+      "entryVersion": 0,
+      "docId": "doc_1",
+      "updatedAt": "2026-04-27T08:01:00.000Z"
+    }
+  ],
+  "assets": {
+    "Images/graph.png": {
+      "entryId": "fil_img",
+      "path": "Images/graph.png",
+      "hash": "sha256:...",
+      "sizeBytes": 12000,
+      "mimeType": "image/png",
+      "contentUrl": "/public/api/rooms/ws_1/files/fil_img/blob/content?hash=sha256%3A..."
+    }
+  }
+}
+```
 
 ## Note Presence SSE
 

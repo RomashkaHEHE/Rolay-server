@@ -7,6 +7,7 @@ RUN npm ci
 
 COPY src ./src
 COPY test ./test
+COPY public-web ./public-web
 COPY openapi.yaml README.md ./
 COPY docs ./docs
 
@@ -21,6 +22,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/public-web/dist ./public-web/dist
 COPY --from=build /app/openapi.yaml ./openapi.yaml
 COPY --from=build /app/docs ./docs
 COPY --from=build /app/README.md ./README.md

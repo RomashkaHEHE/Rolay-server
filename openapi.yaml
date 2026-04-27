@@ -21,6 +21,7 @@ tags:
   - name: tree
   - name: files
   - name: drawings
+  - name: public
 paths:
   /v1/auth/login:
     post:
@@ -374,6 +375,57 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
+  /v1/rooms/{workspaceId}/publication:
+    get:
+      tags: [rooms]
+      summary: Get room publication state
+      operationId: getRoomPublication
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Room publication state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomPublicationResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    patch:
+      tags: [rooms]
+      summary: Toggle room publication state
+      operationId: updateRoomPublication
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoomPublicationRequest'
+      responses:
+        '200':
+          description: Updated room publication state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomPublicationResponse'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
   /v1/workspaces:
     get:
       tags: [rooms]
@@ -433,6 +485,158 @@ paths:
           $ref: '#/components/responses/ErrorUnauthorized'
         '403':
           $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /v1/workspaces/{workspaceId}/publication:
+    get:
+      tags: [rooms]
+      summary: Get room publication state (workspace alias)
+      operationId: getWorkspacePublication
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Room publication state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomPublicationResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+    patch:
+      tags: [rooms]
+      summary: Toggle room publication state (workspace alias)
+      operationId: updateWorkspacePublication
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoomPublicationRequest'
+      responses:
+        '200':
+          description: Updated room publication state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomPublicationResponse'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /public/api/rooms:
+    get:
+      tags: [public]
+      summary: List published rooms
+      operationId: listPublicRooms
+      responses:
+        '200':
+          description: Published room list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicRoomListResponse'
+  /public/api/rooms/{workspaceId}/manifest:
+    get:
+      tags: [public]
+      summary: Get public room manifest
+      operationId: getPublicRoomManifest
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Public room manifest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicRoomManifest'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /public/api/rooms/{workspaceId}/events:
+    get:
+      tags: [public]
+      summary: Subscribe to public room events
+      operationId: streamPublicRoomEvents
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Public server-sent event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  id: 42
+                  event: tree.entry.updated
+                  data: {"entryId":"fil_1","path":"Week-01.md","entryVersion":3}
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /public/api/rooms/{workspaceId}/markdown/{entryId}/crdt-token:
+    post:
+      tags: [public]
+      summary: Create a public read-only Markdown CRDT token
+      operationId: createPublicMarkdownCrdtToken
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/EntryId'
+      responses:
+        '200':
+          description: Read-only public CRDT token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicCrdtTokenResponse'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+  /public/api/rooms/{workspaceId}/files/{entryId}/blob/content:
+    get:
+      tags: [public]
+      summary: Read a public image or Excalidraw blob
+      operationId: getPublicBlobContent
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/EntryId'
+        - name: hash
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Full blob content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: Partial blob content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         '404':
           $ref: '#/components/responses/ErrorNotFound'
   /v1/rooms/{workspaceId}/note-presence/events:
@@ -1204,7 +1408,7 @@ paths:
           $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
-  components:
+components:
   securitySchemes:
     bearerAuth:
       type: http
@@ -1353,6 +1557,7 @@ paths:
             - room.members.updated
             - room.membership.changed
             - room.invite.updated
+            - room.publication.updated
             - admin.user.created
             - admin.user.updated
             - admin.user.deleted
@@ -1368,6 +1573,7 @@ paths:
             - rooms
             - room.members
             - room.invite
+            - room.publication
             - admin.users
             - admin.rooms
             - admin.room.members
@@ -1456,6 +1662,42 @@ paths:
           type: string
         name:
           type: string
+    WorkspacePublication:
+      type: object
+      additionalProperties: false
+      required: [enabled, updatedAt]
+      properties:
+        enabled:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+    RoomPublication:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, enabled, updatedAt]
+      properties:
+        workspaceId:
+          type: string
+        enabled:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+    RoomPublicationResponse:
+      type: object
+      additionalProperties: false
+      required: [publication]
+      properties:
+        publication:
+          $ref: '#/components/schemas/RoomPublication'
+    UpdateRoomPublicationRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
     WorkspaceResponse:
       type: object
       additionalProperties: false
@@ -1477,7 +1719,7 @@ paths:
     RoomListItem:
       type: object
       additionalProperties: false
-      required: [workspace, membershipRole, createdAt, memberCount, inviteEnabled]
+      required: [workspace, membershipRole, createdAt, memberCount, inviteEnabled, publication]
       properties:
         workspace:
           $ref: '#/components/schemas/Workspace'
@@ -1491,6 +1733,8 @@ paths:
           minimum: 0
         inviteEnabled:
           type: boolean
+        publication:
+          $ref: '#/components/schemas/WorkspacePublication'
     AdminRoomListItem:
       allOf:
         - $ref: '#/components/schemas/RoomListItem'
@@ -1774,6 +2018,97 @@ paths:
           minimum: 0
         mimeType:
           type: string
+    PublicRoomSummary:
+      type: object
+      additionalProperties: false
+      required: [workspace, publication]
+      properties:
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+        publication:
+          $ref: '#/components/schemas/WorkspacePublication'
+    PublicRoomListResponse:
+      type: object
+      additionalProperties: false
+      required: [rooms]
+      properties:
+        rooms:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicRoomSummary'
+    PublicManifestEntry:
+      type: object
+      additionalProperties: false
+      required: [id, path, kind, contentMode, entryVersion, updatedAt]
+      properties:
+        id:
+          type: string
+        path:
+          type: string
+        kind:
+          type: string
+          enum: [folder, markdown, excalidraw]
+        contentMode:
+          type: string
+          enum: [none, crdt, blob]
+        entryVersion:
+          type: integer
+          minimum: 0
+        docId:
+          type: string
+        blob:
+          $ref: '#/components/schemas/BlobRevision'
+        updatedAt:
+          type: string
+          format: date-time
+    PublicAsset:
+      type: object
+      additionalProperties: false
+      required: [entryId, path, hash, sizeBytes, mimeType, contentUrl]
+      properties:
+        entryId:
+          type: string
+        path:
+          type: string
+        hash:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        mimeType:
+          type: string
+        contentUrl:
+          type: string
+    PublicRoomManifest:
+      type: object
+      additionalProperties: false
+      required: [workspace, publication, cursor, entries, assets]
+      properties:
+        workspace:
+          $ref: '#/components/schemas/Workspace'
+        publication:
+          $ref: '#/components/schemas/WorkspacePublication'
+        cursor:
+          type: integer
+          minimum: 0
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicManifestEntry'
+        assets:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PublicAsset'
+    PublicCrdtTokenResponse:
+      allOf:
+        - $ref: '#/components/schemas/CrdtTokenResponse'
+        - type: object
+          additionalProperties: false
+          required: [readOnly]
+          properties:
+            readOnly:
+              type: boolean
+              const: true
     BatchOperationsRequest:
       type: object
       additionalProperties: false

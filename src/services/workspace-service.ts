@@ -14,6 +14,7 @@ import {
   Workspace,
   WorkspaceEvent,
   WorkspaceInvite,
+  WorkspacePublication,
   WorkspaceRole
 } from "../domain/types";
 import { MemoryState, StoredWorkspace, WorkspaceEventListener } from "./memory-state";
@@ -31,6 +32,7 @@ interface WorkspaceListItem {
   createdAt: string;
   memberCount: number;
   inviteEnabled: boolean;
+  publication: WorkspacePublication;
 }
 
 interface WorkspaceAdminListItem extends WorkspaceListItem {
@@ -50,18 +52,35 @@ interface WorkspaceInviteView {
   updatedAt: string;
 }
 
+interface WorkspacePublicationView {
+  workspaceId: string;
+  enabled: boolean;
+  updatedAt: string;
+}
+
 interface WorkspaceMemberMutationResult {
   workspace: Workspace;
   user: User;
   membership: Membership;
 }
 
+type PublicationChangeListener = (workspaceId: string, enabled: boolean) => void;
+
 export class WorkspaceService {
+  private readonly publicationListeners = new Set<PublicationChangeListener>();
+
   constructor(
     private readonly state: MemoryState,
     private readonly stateStore: StateStore,
     private readonly settingsEvents: SettingsEventsService
   ) {}
+
+  onPublicationChanged(listener: PublicationChangeListener): () => void {
+    this.publicationListeners.add(listener);
+    return () => {
+      this.publicationListeners.delete(listener);
+    };
+  }
 
   listUserWorkspaces(actor: User): WorkspaceListItem[] {
     return [...this.state.workspaces.values()]
@@ -77,7 +96,8 @@ export class WorkspaceService {
           membershipRole: membership.role,
           createdAt: workspace.createdAt,
           memberCount: workspace.memberships.size,
-          inviteEnabled: workspace.invite.enabled
+          inviteEnabled: workspace.invite.enabled,
+          publication: cloneValue(workspace.publication)
         };
       })
       .sort((left, right) => left.workspace.name.localeCompare(right.workspace.name));
@@ -92,6 +112,7 @@ export class WorkspaceService {
         createdAt: workspace.createdAt,
         memberCount: workspace.memberships.size,
         inviteEnabled: workspace.invite.enabled,
+        publication: cloneValue(workspace.publication),
         ownerCount: [...workspace.memberships.values()].filter(
           (membership) => membership.role === "owner"
         ).length
@@ -118,6 +139,10 @@ export class WorkspaceService {
       workspace,
       createdBy: actor.id,
       createdAt: now,
+      publication: {
+        enabled: false,
+        updatedAt: now
+      },
       invite: {
         code: createInviteCode(),
         enabled: true,
@@ -169,6 +194,52 @@ export class WorkspaceService {
     const workspace = this.requireWorkspace(workspaceId);
     this.assertCanManageWorkspace(workspace, actor);
     return this.toInviteView(workspace.workspace.id, workspace.invite);
+  }
+
+  getPublication(actor: User, workspaceId: string): WorkspacePublicationView {
+    const workspace = this.requireWorkspace(workspaceId);
+    this.assertCanManageWorkspace(workspace, actor);
+    return this.toPublicationView(workspace.workspace.id, workspace.publication);
+  }
+
+  async updatePublicationEnabled(
+    actor: User,
+    workspaceId: string,
+    enabled: boolean
+  ): Promise<WorkspacePublicationView> {
+    const workspace = this.requireWorkspace(workspaceId);
+    this.assertCanManageWorkspace(workspace, actor);
+
+    if (workspace.publication.enabled === enabled) {
+      return this.toPublicationView(workspace.workspace.id, workspace.publication);
+    }
+
+    workspace.publication = {
+      enabled,
+      updatedAt: new Date().toISOString()
+    };
+    this.publishEvent(workspace, "room.publication.updated", {
+      workspaceId,
+      publication: cloneValue(workspace.publication)
+    });
+
+    if (!enabled) {
+      for (const [token, record] of this.state.publicCrdtTokens.entries()) {
+        if (record.workspaceId === workspaceId) {
+          this.state.publicCrdtTokens.delete(token);
+        }
+      }
+    }
+
+    await this.stateStore.saveState(this.state);
+    this.settingsEvents.publishRoomUpdated(workspaceId);
+    this.settingsEvents.publishRoomPublicationUpdated(workspaceId);
+
+    for (const listener of this.publicationListeners) {
+      listener(workspaceId, enabled);
+    }
+
+    return this.toPublicationView(workspace.workspace.id, workspace.publication);
   }
 
   async updateInviteEnabled(
@@ -1023,6 +1094,12 @@ export class WorkspaceService {
       }
     }
 
+    for (const [token, record] of this.state.publicCrdtTokens.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.publicCrdtTokens.delete(token);
+      }
+    }
+
     for (const [ticketId, record] of this.state.blobUploadTickets.entries()) {
       if (record.workspaceId === workspaceId) {
         this.state.blobUploadTickets.delete(ticketId);
@@ -1054,6 +1131,17 @@ export class WorkspaceService {
       code: invite.code,
       enabled: invite.enabled,
       updatedAt: invite.updatedAt
+    };
+  }
+
+  private toPublicationView(
+    workspaceId: string,
+    publication: WorkspacePublication
+  ): WorkspacePublicationView {
+    return {
+      workspaceId,
+      enabled: publication.enabled,
+      updatedAt: publication.updatedAt
     };
   }
 

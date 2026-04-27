@@ -5,6 +5,7 @@ import { URL } from "node:url";
 import {
   Hocuspocus,
   afterUnloadDocumentPayload,
+  beforeHandleMessagePayload,
   onAwarenessUpdatePayload
 } from "@hocuspocus/server";
 import type { FastifyBaseLogger } from "fastify";
@@ -17,13 +18,15 @@ import { FileEntry, Membership } from "../domain/types";
 import { MemoryState, StoredWorkspace } from "./memory-state";
 import { NotePresenceService } from "./note-presence-service";
 import { NoteReadStateService } from "./note-read-state-service";
+import { PublicAccessService } from "./public-access-service";
 import { StorageService } from "./storage-service";
 
 interface RealtimeContext {
-  userId: string;
   workspaceId: string;
   entryId: string;
-  role: Membership["role"];
+  publicAccess: boolean;
+  userId?: string;
+  role?: Membership["role"];
 }
 
 type UpgradeHandler = (
@@ -38,6 +41,71 @@ function createRealtimeError(reason: string): Error & { reason: string } {
   return error;
 }
 
+function readVarUint(payload: Uint8Array, offsetRef: { offset: number }): number {
+  let number = 0;
+  let multiplier = 1;
+  while (offsetRef.offset < payload.byteLength) {
+    const byte = payload[offsetRef.offset]!;
+    offsetRef.offset += 1;
+    number += (byte & 0b0111_1111) * multiplier;
+    if (byte < 0b1000_0000) {
+      return number;
+    }
+    multiplier *= 128;
+  }
+
+  throw createRealtimeError("malformed-message");
+}
+
+function readVarString(payload: Uint8Array, offsetRef: { offset: number }): string {
+  const length = readVarUint(payload, offsetRef);
+  const start = offsetRef.offset;
+  const end = start + length;
+  if (end > payload.byteLength) {
+    throw createRealtimeError("malformed-message");
+  }
+  offsetRef.offset = end;
+  return new TextDecoder().decode(payload.slice(start, end));
+}
+
+function readVarUint8Array(payload: Uint8Array, offsetRef: { offset: number }): Uint8Array {
+  const length = readVarUint(payload, offsetRef);
+  const start = offsetRef.offset;
+  const end = start + length;
+  if (end > payload.byteLength) {
+    throw createRealtimeError("malformed-message");
+  }
+  offsetRef.offset = end;
+  return payload.slice(start, end);
+}
+
+function parseHocuspocusMessage(payload: Uint8Array): { type: number; awarenessStates: unknown[] } {
+  const offsetRef = { offset: 0 };
+  readVarString(payload, offsetRef);
+  const type = readVarUint(payload, offsetRef);
+  if (type !== 1) {
+    return {
+      type,
+      awarenessStates: []
+    };
+  }
+
+  const awarenessUpdate = readVarUint8Array(payload, offsetRef);
+  const awarenessOffsetRef = { offset: 0 };
+  const stateCount = readVarUint(awarenessUpdate, awarenessOffsetRef);
+  const states: unknown[] = [];
+  for (let index = 0; index < stateCount; index += 1) {
+    readVarUint(awarenessUpdate, awarenessOffsetRef);
+    readVarUint(awarenessUpdate, awarenessOffsetRef);
+    states.push(JSON.parse(readVarString(awarenessUpdate, awarenessOffsetRef)) as unknown);
+  }
+
+  return {
+    type,
+    awarenessStates: states
+  };
+}
+
 export class RealtimeService {
   private readonly hocuspocus: Hocuspocus;
   private websocketServer: WebSocketServer | undefined;
@@ -48,6 +116,7 @@ export class RealtimeService {
     private readonly storage: StorageService,
     private readonly notePresence: NotePresenceService,
     private readonly noteReadState: NoteReadStateService,
+    private readonly publicAccess: PublicAccessService,
     private readonly env: AppEnv,
     private readonly logger: FastifyBaseLogger
   ) {
@@ -62,6 +131,9 @@ export class RealtimeService {
       },
       onAwarenessUpdate: async (payload) => {
         this.handleAwarenessUpdate(payload);
+      },
+      beforeHandleMessage: async (payload) => {
+        this.assertMessageAllowed(payload);
       },
       onStoreDocument: async (payload) => {
         await this.storeDocument(payload.documentName, payload.document);
@@ -94,6 +166,19 @@ export class RealtimeService {
     this.logger.info({ path: "/v1/crdt" }, "Realtime CRDT service attached");
   }
 
+  closeWorkspaceConnections(workspaceId: string): void {
+    const workspace = this.state.workspaces.get(workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    for (const entry of workspace.entries.values()) {
+      if (entry.kind === "markdown" && entry.docId) {
+        this.hocuspocus.closeConnections(entry.docId);
+      }
+    }
+  }
+
   async close(server?: HttpServer): Promise<void> {
     if (server && this.upgradeHandler) {
       server.off("upgrade", this.upgradeHandler);
@@ -124,6 +209,34 @@ export class RealtimeService {
     token: string,
     connectionConfig: { readOnly: boolean }
   ): RealtimeContext {
+    const publicTokenRecord = this.state.publicCrdtTokens.get(token);
+    if (publicTokenRecord) {
+      if (Date.parse(publicTokenRecord.expiresAt) <= Date.now()) {
+        this.state.publicCrdtTokens.delete(token);
+        throw createRealtimeError("invalid-crdt-token");
+      }
+      if (documentName !== publicTokenRecord.docId) {
+        throw createRealtimeError("document-token-mismatch");
+      }
+      if (
+        !this.publicAccess.isPublicMarkdownEntry(
+          publicTokenRecord.workspaceId,
+          publicTokenRecord.entryId,
+          publicTokenRecord.docId
+        )
+      ) {
+        this.state.publicCrdtTokens.delete(token);
+        throw createRealtimeError("public-room-not-available");
+      }
+
+      connectionConfig.readOnly = true;
+      return {
+        workspaceId: publicTokenRecord.workspaceId,
+        entryId: publicTokenRecord.entryId,
+        publicAccess: true
+      };
+    }
+
     const tokenRecord = this.state.crdtTokens.get(token);
     if (!tokenRecord || Date.parse(tokenRecord.expiresAt) <= Date.now()) {
       this.state.crdtTokens.delete(token);
@@ -144,7 +257,8 @@ export class RealtimeService {
       userId: tokenRecord.userId,
       workspaceId: context.workspace.workspace.id,
       entryId: context.entry.id,
-      role: context.membership.role
+      role: context.membership.role,
+      publicAccess: false
     };
   }
 
@@ -187,7 +301,7 @@ export class RealtimeService {
 
   private handleAwarenessUpdate(payload: onAwarenessUpdatePayload): void {
     const context = payload.context as RealtimeContext | undefined;
-    if (!context) {
+    if (!context || context.publicAccess) {
       return;
     }
 
@@ -201,6 +315,29 @@ export class RealtimeService {
 
   private handleAfterUnloadDocument(payload: afterUnloadDocumentPayload): void {
     this.notePresence.clearDocumentPresence(payload.documentName);
+  }
+
+  private assertMessageAllowed(payload: beforeHandleMessagePayload): void {
+    const context = payload.context as RealtimeContext | undefined;
+    if (!context?.publicAccess) {
+      return;
+    }
+
+    const message = parseHocuspocusMessage(payload.update);
+    if (message.type === 5 || message.type === 6) {
+      throw createRealtimeError("public-readonly-message");
+    }
+    if (
+      message.type === 1 &&
+      message.awarenessStates.some(
+        (state) =>
+          typeof state === "object" &&
+          state !== null &&
+          Object.keys(state).length > 0
+      )
+    ) {
+      throw createRealtimeError("public-readonly-awareness");
+    }
   }
 
   private findMarkdownAccess(

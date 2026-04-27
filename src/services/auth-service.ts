@@ -454,6 +454,12 @@ export class AuthService {
       }
     }
 
+    for (const [token, record] of this.state.publicCrdtTokens.entries()) {
+      if (record.workspaceId === workspaceId) {
+        this.state.publicCrdtTokens.delete(token);
+      }
+    }
+
     for (const [ticketId, record] of this.state.blobUploadTickets.entries()) {
       if (record.workspaceId === workspaceId) {
         this.state.blobUploadTickets.delete(ticketId);
