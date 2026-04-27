@@ -345,6 +345,9 @@ export class WorkspaceService {
     const results: OperationResult[] = [];
     let didMutate = false;
 
+    // Room tree state is intentionally server-authoritative. Clients use opId idempotency plus
+    // preconditions for optimistic concurrency, and conflicting path changes resolve as explicit
+    // conflicts instead of any CRDT-style merge.
     for (const operation of operations) {
       const existing = workspace.opResults.get(operation.opId);
       if (existing) {

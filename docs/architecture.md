@@ -15,12 +15,12 @@ The current server optimizes for:
 - reliable realtime editing for Markdown notes
 - predictable tree/file sync
 - simple room and invite management
-- enough structure for an Obsidian plugin to be implemented without chat history
+- enough structure for a dedicated Obsidian plugin and small self-hosted group workflow
 - operational simplicity over maximum generality
 
 ## High-Level Model
 
-The server has four different synchronization layers:
+The server has five different synchronization layers:
 
 1. Room and user management
    - authentication
@@ -42,11 +42,11 @@ The server has four different synchronization layers:
    - note presence is live and awareness-derived
    - note read state is persisted per account and driven by stored Markdown content versions
 
- 5. Excalidraw live sessions
-    - single current editor per drawing
-    - live scene snapshot broadcast to viewers
-    - editor pointer presence
-    - persistent `.excalidraw.md` file remains blob-backed storage/fallback
+5. Excalidraw live sessions
+   - single current editor per drawing
+   - live scene snapshot broadcast to viewers
+   - editor pointer presence
+   - persistent `.excalidraw.md` file remains blob-backed storage/fallback
 
 These layers are intentionally separate. Only Markdown content uses CRDT.
 
@@ -78,7 +78,7 @@ Behavior:
 
 ## Primary Transport Layers
 
-The server uses five transports:
+The server uses seven transports:
 
 1. REST JSON
    - auth
@@ -97,10 +97,10 @@ The server uses five transports:
    - `GET /v1/events/settings`
    - used for profile, room list, admin list, invite, and membership updates
 
-  4. Note presence SSE
-     - `GET /v1/workspaces/{workspaceId}/note-presence/events`
-    - used for room-wide live note viewer state aggregated from Markdown awareness
-    - exposes awareness-derived `sessionId` for follow-mode joins back into document awareness
+4. Note presence SSE
+   - `GET /v1/workspaces/{workspaceId}/note-presence/events`
+   - used for room-wide live note viewer state aggregated from Markdown awareness
+   - exposes awareness-derived `sessionId` for follow-mode joins back into document awareness
 
 5. Note read-state SSE
    - `GET /v1/workspaces/{workspaceId}/note-read-state/events`
@@ -179,7 +179,7 @@ Reasons:
 - rename and move semantics are easier to reason about
 - Obsidian file handling maps more naturally to stable entry IDs plus canonical paths
 - conflict handling is simpler and more explicit
-- the implementation is easier for plugin agents to understand
+- the implementation is easier to reason about and implement correctly in clients
 
 The room tree is synchronized as:
 
@@ -323,11 +323,3 @@ Current constraints:
 
 That is acceptable for the current product scope, but it is not a large multi-node architecture yet.
 
-## Recommended Reading Order For A New Agent
-
-1. `README.md`
-2. `docs/codebase-map.md`
-3. `openapi.yaml`
-4. route modules under `src/modules`
-5. service modules under `src/services`
-6. `test/app.test.ts`

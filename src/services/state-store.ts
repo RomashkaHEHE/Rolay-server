@@ -64,6 +64,8 @@ class PostgresStateStore implements StateStore {
 
     const operation = this.saveChain.then(async () => {
       await this.ensureReady();
+      // v1 intentionally persists one canonical snapshot row per deployment key. This keeps the
+      // operational model simple for a single small server at the cost of relational query power.
       await this.client.query(
         `
           INSERT INTO rolay_state_snapshots (state_key, version, payload, updated_at)

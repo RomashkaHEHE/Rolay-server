@@ -1,0 +1,91 @@
+# Current State
+
+Last updated: `2026-04-27`
+
+## Baseline
+
+Rolay Server is a single-process collaboration backend for a self-hosted Obsidian group.
+
+Current core stack:
+
+- Fastify HTTP API
+- `Yjs` + `Hocuspocus` for Markdown realtime
+- server-authoritative room tree
+- blob-based sync for non-Markdown files
+- single-editor live Excalidraw sessions
+- state persistence via in-memory or PostgreSQL snapshot store
+- object/document storage via local disk or MinIO-compatible backend
+
+## Current Priorities
+
+1. Preserve compatibility with existing plugin builds while protocol evolves.
+2. Keep the synchronization layers clearly separated and predictable.
+3. Maintain data safety over convenience, especially for Markdown merge behavior and binary upload
+   publication.
+
+## Stable Invariants
+
+- `room` is the product term; `workspaceId` is still the stable API identifier.
+- Only Markdown notes use CRDT.
+- The file tree is server-authoritative, not CRDT-based.
+- Binary and Excalidraw file revisions become visible to other users only after
+  `commit_blob_revision`.
+- Room tree SSE, settings SSE, note presence SSE, and note read-state SSE are separate systems with
+  different purposes.
+- Backward compatibility matters: do not turn previously optional client data into required runtime
+  input without a fallback or a versioned migration plan.
+- `sha256` digests are normalized to canonical base64 form in persisted state and API responses.
+
+## Active Tasks
+
+- [tasks/legacy-client-compatibility.md](tasks/legacy-client-compatibility.md)
+  - cross-cutting guardrail task to keep older plugin builds working while new protocol features are
+    added
+
+If you start another substantial feature, create a new task file before leaving unfinished work.
+
+## Recently Completed Changes
+
+- Added room-level Markdown note read-state stream and `mark-read` mutation.
+- Added follow-mode support in note presence via awareness `sessionId`.
+- Restored compatibility for older plugin builds that do not publish `viewer.sessionId` by
+  synthesizing a legacy fallback `sessionId` server-side.
+- Added resumable authenticated blob upload/download flows with progress metadata and cancel
+  support.
+- Added live Excalidraw support with single-editor lease semantics and reconnect snapshot storage.
+
+## Where To Look First
+
+For room, invite, or membership behavior:
+
+- [src/modules/workspaces/workspaces.routes.ts](../src/modules/workspaces/workspaces.routes.ts)
+- [src/modules/invites/invites.routes.ts](../src/modules/invites/invites.routes.ts)
+- [src/services/workspace-service.ts](../src/services/workspace-service.ts)
+
+For Markdown realtime, note presence, or note read-state:
+
+- [src/services/realtime-service.ts](../src/services/realtime-service.ts)
+- [src/services/note-presence-service.ts](../src/services/note-presence-service.ts)
+- [src/services/note-read-state-service.ts](../src/services/note-read-state-service.ts)
+
+For binary transfer behavior:
+
+- [src/modules/files/files.routes.ts](../src/modules/files/files.routes.ts)
+- [src/modules/storage/storage.routes.ts](../src/modules/storage/storage.routes.ts)
+- [src/services/file-service.ts](../src/services/file-service.ts)
+- [src/services/storage-service.ts](../src/services/storage-service.ts)
+
+For canonical protocol details:
+
+- [openapi.yaml](../openapi.yaml)
+- [docs/protocol.md](../docs/protocol.md)
+
+## Immediate Watchouts
+
+- Old plugin builds may still rely on legacy behavior around note presence and ticket-based blob
+  flows.
+- `docs/*` should remain factual; do not dump unfinished-task memory there.
+- If you touch a protocol edge used by the plugin, update:
+  - the task file, if the work is ongoing
+  - `current-state.md`, if priorities or invariants changed
+  - `openapi.yaml` and `docs/protocol.md`, if the wire contract changed

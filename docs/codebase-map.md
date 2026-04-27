@@ -1,21 +1,7 @@
 # Codebase Map
 
-This document is for new engineers or agents entering the repository without chat history.
-It tells you where to look first for each feature.
-
-## Start Here
-
-Recommended reading order:
-
-1. `AGENT_ENTRYPOINT.md`
-2. `README.md`
-3. `docs/architecture.md`
-4. `docs/protocol.md`
-5. `openapi.yaml`
-6. `src/app.ts`
-7. route modules in `src/modules`
-8. service modules in `src/services`
-9. `test/app.test.ts`
+This document maps the repository structure and points to the files that implement each major
+runtime surface.
 
 ## Top-Level Runtime Entry Points
 
@@ -62,7 +48,7 @@ Recommended reading order:
   - room event model
   - ticket records
 
-This file is the fastest way to see the server's core vocabulary.
+This file is the main catalog of the server's vocabulary.
 
 ## Route Modules
 
@@ -191,7 +177,7 @@ Most business logic lives here.
   - snapshot serialization/deserialization
   - listener registries
 
-## Three Different Live Streams
+## Four Different Live Streams
 
 This matters a lot.
 

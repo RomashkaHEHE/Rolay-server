@@ -3,10 +3,6 @@
 Backend for self-hosted Obsidian collaboration with realtime markdown editing,
 single-editor Excalidraw live sessions, room tree sync, and blob-based attachment storage.
 
-New agent start here:
-
-- [AGENT_ENTRYPOINT.md](AGENT_ENTRYPOINT.md)
-
 ## Current status
 
 - live auth endpoints: `POST /v1/auth/login`, `POST /v1/auth/refresh`
@@ -121,7 +117,7 @@ Managed accounts:
 
 ## Repository docs
 
-- [AGENT_ENTRYPOINT.md](AGENT_ENTRYPOINT.md)
+- [AGENTS/AGENTS.md](AGENTS/AGENTS.md)
 - [docs/codebase-map.md](docs/codebase-map.md)
 - [docs/architecture.md](docs/architecture.md)
 - [docs/protocol.md](docs/protocol.md)
