@@ -53,8 +53,8 @@ If you start another substantial feature, create a new task file before leaving 
 ## Deployment Snapshot
 
 - Production host: `http://46.16.36.87:3000`
-- Current deployed server image after public-site rollout:
-  `ghcr.io/romashkahehe/rolay-server:sha-71cd66ea74d0`
+- Production images are published as `ghcr.io/romashkahehe/rolay-server:sha-<12-char-commit>`
+  by the `deploy` GitHub Actions workflow on `main`.
 - `/` serves the bundled public read-only web app.
 - `/ready` and existing `/v1/*` APIs remain on the same Fastify/Docker service.
 - `/public/api/rooms` is live and returns published rooms only.
