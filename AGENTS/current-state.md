@@ -23,6 +23,7 @@ Current core stack:
 2. Keep the synchronization layers clearly separated and predictable.
 3. Maintain data safety over convenience, especially for Markdown merge behavior and binary upload
    publication.
+4. Keep the bundled public read-only site deployable from the same Docker image as the API server.
 
 ## Stable Invariants
 
@@ -47,6 +48,15 @@ Current core stack:
 
 If you start another substantial feature, create a new task file before leaving unfinished work.
 
+## Deployment Snapshot
+
+- Production host: `http://46.16.36.87:3000`
+- Current deployed server image after public-site rollout:
+  `ghcr.io/romashkahehe/rolay-server:sha-71cd66ea74d0`
+- `/` serves the bundled public read-only web app.
+- `/ready` and existing `/v1/*` APIs remain on the same Fastify/Docker service.
+- `/public/api/rooms` is live and returns published rooms only.
+
 ## Recently Completed Changes
 
 - Added room-level Markdown note read-state stream and `mark-read` mutation.
@@ -58,6 +68,8 @@ If you start another substantial feature, create a new task file before leaving 
 - Added live Excalidraw support with single-editor lease semantics and reconnect snapshot storage.
 - Added public read-only room publishing, public manifest/blob/CRDT APIs, and the bundled dark web
   viewer served from `/`.
+- Deployed the public read-only site rollout to the production VM after the GitHub Actions SSH
+  failure was caused by the server being temporarily offline.
 
 ## Where To Look First
 
@@ -100,6 +112,8 @@ For canonical protocol details:
   website traffic.
 - Public manifests intentionally do not list image files as tree entries; images are exposed only
   through the `assets` map for Markdown embeds.
+- The plugin still needs UI wiring for publication toggles and public-link display; server support is
+  already present.
 - `docs/*` should remain factual; do not dump unfinished-task memory there.
 - If you touch a protocol edge used by the plugin, update:
   - the task file, if the work is ongoing
