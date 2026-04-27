@@ -7,7 +7,7 @@ It tells you where to look first for each feature.
 
 Recommended reading order:
 
-1. `AGENT_ENTRYPOINT.md`
+1. `AGENTS/AGENTS.md`
 2. `README.md`
 3. `docs/architecture.md`
 4. `docs/protocol.md`
@@ -180,7 +180,7 @@ Most business logic lives here.
   - snapshot serialization/deserialization
   - listener registries
 
-## Three Different Live Streams
+## Four Different Live Streams
 
 This matters a lot.
 
@@ -205,6 +205,14 @@ This matters a lot.
 - upstream source of truth: Markdown awareness from `src/services/realtime-service.ts`
 - scope: one room
 - payloads: `presence.snapshot`, `note.presence.updated`
+
+### Drawing WebSocket
+
+- implementation: upgrade handling in `src/services/drawing-service.ts`
+- auth/bootstrap route: `POST /v1/files/{entryId}/drawing-token`
+- control routes: `src/modules/drawings/drawings.routes.ts`
+- scope: one drawing entry
+- payloads: `drawing.ready`, `lease.updated`, `scene.updated`, `pointer.updated`, control events
 
 Do not confuse them.
 

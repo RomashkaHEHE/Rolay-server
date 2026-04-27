@@ -5,7 +5,7 @@ single-editor Excalidraw live sessions, room tree sync, and blob-based attachmen
 
 New agent start here:
 
-- [AGENT_ENTRYPOINT.md](AGENT_ENTRYPOINT.md)
+- [AGENTS/AGENTS.md](AGENTS/AGENTS.md)
 
 ## Current status
 
@@ -117,7 +117,7 @@ Managed accounts:
 
 ## Repository docs
 
-- [AGENT_ENTRYPOINT.md](AGENT_ENTRYPOINT.md)
+- [AGENTS/AGENTS.md](AGENTS/AGENTS.md)
 - [docs/codebase-map.md](docs/codebase-map.md)
 - [docs/architecture.md](docs/architecture.md)
 - [docs/protocol.md](docs/protocol.md)
