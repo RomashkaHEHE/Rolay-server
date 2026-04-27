@@ -9,7 +9,11 @@ interface ExcalidrawScene {
 export async function renderDrawing(raw: string, drawingHost: HTMLElement): Promise<void> {
   const scene = parseExcalidrawScene(raw);
   if (!scene) {
-    drawingHost.innerHTML = `<pre class="drawing-raw"></pre>`;
+    drawingHost.innerHTML = `<div class="drawing-error"></div><pre class="drawing-raw"></pre>`;
+    drawingHost.querySelector(".drawing-error")!.textContent =
+      isObsidianExcalidraw(raw)
+        ? "Excalidraw scene marker was found, but the drawing JSON block could not be parsed."
+        : "This file does not look like an Excalidraw scene.";
     drawingHost.querySelector("pre")!.textContent = raw;
     return;
   }
@@ -82,14 +86,77 @@ function renderFallbackCanvas(scene: ExcalidrawScene, drawingHost: HTMLElement):
 }
 
 function parseExcalidrawScene(raw: string): ExcalidrawScene | null {
-  const fenced = raw.match(/```json\s*([\s\S]*?)```/i)?.[1];
-  const candidate = fenced ?? raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
-  try {
-    const parsed = JSON.parse(candidate);
-    return typeof parsed === "object" && parsed !== null ? parsed : null;
-  } catch {
+  for (const candidate of extractJsonCandidates(raw)) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const scene = normalizeScene(parsed);
+      if (scene) {
+        return scene;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function extractJsonCandidates(raw: string): string[] {
+  const candidates: string[] = [];
+
+  for (const match of raw.matchAll(/```(?:json|excalidraw|javascript|js)?\s*\n([\s\S]*?)```/gi)) {
+    if (match[1]?.trim()) {
+      candidates.push(match[1].trim());
+    }
+  }
+
+  const drawingSection = raw.match(/(?:^|\n)#\s*Drawing\s*\n([\s\S]*)/i)?.[1];
+  if (drawingSection) {
+    for (const match of drawingSection.matchAll(/```(?:json|excalidraw)?\s*\n([\s\S]*?)```/gi)) {
+      if (match[1]?.trim()) {
+        candidates.unshift(match[1].trim());
+      }
+    }
+  }
+
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(raw.slice(firstBrace, lastBrace + 1));
+  }
+
+  return [...new Set(candidates)];
+}
+
+function normalizeScene(value: unknown): ExcalidrawScene | null {
+  if (!isRecord(value)) {
     return null;
   }
+
+  const direct = value as ExcalidrawScene;
+  if (Array.isArray(direct.elements)) {
+    return direct;
+  }
+
+  const nestedScene = isRecord(value.scene) ? (value.scene as ExcalidrawScene) : null;
+  if (nestedScene && Array.isArray(nestedScene.elements)) {
+    return nestedScene;
+  }
+
+  const exported = isRecord(value.excalidraw) ? (value.excalidraw as ExcalidrawScene) : null;
+  if (exported && Array.isArray(exported.elements)) {
+    return exported;
+  }
+
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isObsidianExcalidraw(raw: string): boolean {
+  return /^---[\s\S]*?excalidraw-plugin:\s*parsed[\s\S]*?---/i.test(raw);
 }
 
 function drawingBounds(elements: unknown[]): {

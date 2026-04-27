@@ -1,4 +1,5 @@
 import { markdown } from "@codemirror/lang-markdown";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import {
   Decoration,
   DecorationSet,
@@ -12,6 +13,7 @@ import {
   StateField
 } from "@codemirror/state";
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import { tags } from "@lezer/highlight";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import * as Y from "yjs";
@@ -268,6 +270,79 @@ const rolayTheme = EditorView.theme({
   }
 });
 
+const obsidianReadableHighlight = HighlightStyle.define([
+  {
+    tag: tags.heading1,
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: "1.72em",
+    fontWeight: "700",
+    lineHeight: "1.32",
+    color: "#f1eadc"
+  },
+  {
+    tag: tags.heading2,
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: "1.44em",
+    fontWeight: "700",
+    lineHeight: "1.36",
+    color: "#f1eadc"
+  },
+  {
+    tag: tags.heading3,
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: "1.22em",
+    fontWeight: "700",
+    color: "#f1eadc"
+  },
+  {
+    tag: [tags.heading4, tags.heading5, tags.heading6],
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontWeight: "700",
+    color: "#f1eadc"
+  },
+  {
+    tag: tags.strong,
+    fontWeight: "700",
+    color: "#fff2dd"
+  },
+  {
+    tag: tags.emphasis,
+    fontStyle: "italic",
+    color: "#f4dfc7"
+  },
+  {
+    tag: tags.strikethrough,
+    textDecoration: "line-through",
+    color: "#b7aea0"
+  },
+  {
+    tag: tags.link,
+    color: "#9fb9d9",
+    textDecoration: "underline",
+    textDecorationColor: "rgba(159, 185, 217, 0.38)"
+  },
+  {
+    tag: tags.url,
+    color: "#9fb9d9"
+  },
+  {
+    tag: tags.monospace,
+    borderRadius: "3px",
+    backgroundColor: "rgba(255, 255, 255, 0.07)",
+    color: "#ffd9a8",
+    fontFamily: '"Cascadia Mono", "JetBrains Mono", Consolas, monospace'
+  },
+  {
+    tag: tags.quote,
+    color: "#cbbfae",
+    fontStyle: "italic"
+  },
+  {
+    tag: tags.list,
+    color: "#d8a657"
+  }
+]);
+
 export async function openMarkdownViewer(params: {
   entry: PublicEntry;
   manifest: PublicManifest;
@@ -286,6 +361,7 @@ export async function openMarkdownViewer(params: {
       doc: "",
       extensions: [
         markdown(),
+        syntaxHighlighting(obsidianReadableHighlight),
         rolayTheme,
         remoteCursorField,
         imageField,
@@ -320,6 +396,9 @@ export async function openMarkdownViewer(params: {
       }
     }
   });
+  // Public viewers are read-only observers: they must receive collaborator awareness,
+  // but never publish a local "anonymous visitor" state that the server could reject.
+  provider.awareness?.setLocalState(null);
 
   text.observe(() => {
     syncEditor(editor, text.toString(), assets);

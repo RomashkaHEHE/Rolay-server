@@ -223,8 +223,9 @@ Rules:
   map for Markdown image resolution
 - public blob content is allowed only for `image/*` binary entries and Excalidraw entries
 - public Markdown CRDT tokens are short-lived and read-only
-- public visitors do not get durable accounts, cannot write document updates, and cannot publish
-  non-empty awareness/presence
+- public visitors do not get durable accounts and cannot write document updates
+- inbound public awareness messages are converted to awareness queries; public viewers can receive
+  authenticated member cursors, but visitor awareness is never applied to the shared document
 - public room events reuse room event sequence IDs but only expose safe tree/blob/publication
   events
 

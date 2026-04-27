@@ -34,6 +34,8 @@ Current core stack:
   `commit_blob_revision`.
 - Rooms are private by default; public read-only publication must stay explicitly opt-in.
 - Public web visitors must never get write-capable CRDT access or appear as collaborators.
+- Public web viewers may observe authenticated member awareness for cursors, but inbound public
+  awareness is filtered before it can become shared presence.
 - Room tree SSE, settings SSE, note presence SSE, and note read-state SSE are separate systems with
   different purposes.
 - Backward compatibility matters: do not turn previously optional client data into required runtime
@@ -73,6 +75,11 @@ If you start another substantial feature, create a new task file before leaving 
 - Improved the public web viewer visual language, added lazy KaTeX rendering for Markdown math, and
   switched public Excalidraw rendering to the official Excalidraw SVG export path with a lightweight
   canvas fallback.
+- Fixed public Markdown live viewing so read-only CRDT sessions receive live edits and member
+  awareness without publishing public visitor presence. Markdown source styling now highlights
+  headings, emphasis, links, inline code, and related syntax closer to Obsidian's source view.
+- Expanded public Excalidraw parsing for Obsidian Excalidraw plugin files marked with
+  `excalidraw-plugin: parsed`.
 
 ## Where To Look First
 
@@ -113,6 +120,8 @@ For canonical protocol details:
   flows.
 - Public CRDT tokens must remain read-only; do not reuse authenticated member tokens for public
   website traffic.
+- Do not remove the public awareness filtering in `src/services/realtime-service.ts`; it is what
+  lets public viewers see member cursors without becoming collaborators themselves.
 - Public manifests intentionally do not list image files as tree entries; images are exposed only
   through the `assets` map for Markdown embeds.
 - Keep the public web shell lightweight. Heavy readers such as Markdown+KaTeX and Excalidraw should

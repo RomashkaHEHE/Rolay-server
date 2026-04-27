@@ -263,10 +263,10 @@ h1 {
 .remote-cursor {
   position: relative;
   display: inline-block;
-  height: 1.72em;
+  height: 1.68em;
   margin-left: -1px;
   border-left: 2px solid;
-  vertical-align: text-bottom;
+  vertical-align: -0.24em;
   z-index: 2;
 }
 
@@ -354,6 +354,28 @@ h1 {
   margin: 0;
   color: var(--text);
   white-space: pre-wrap;
+}
+
+.drawing-error {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(214, 155, 99, 0.34);
+  border-radius: var(--radius-sm);
+  background: rgba(214, 155, 99, 0.08);
+  color: #f1cfaa;
+}
+
+.cm-content {
+  caret-color: transparent;
+}
+
+.cm-line {
+  min-height: 1.74em;
+}
+
+.cm-url,
+.cm-link {
+  color: var(--accent-cool);
 }
 
 @media (max-width: 860px) {

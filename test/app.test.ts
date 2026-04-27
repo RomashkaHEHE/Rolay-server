@@ -3088,6 +3088,175 @@ test("room publication exposes only safe read-only public manifest and blobs", a
   await cleanupTestEnv(env);
 });
 
+test("public markdown CRDT viewer receives live edits and member awareness", async () => {
+  const env = createTestEnv({
+    crdtStoreDebounceMs: 50,
+    crdtStoreMaxDebounceMs: 100
+  });
+  const app = await buildApp({
+    logger: false,
+    env
+  });
+  let writerProvider: HocuspocusProvider | undefined;
+  let publicProvider: HocuspocusProvider | undefined;
+  let writerDoc: Y.Doc | undefined;
+  let publicDoc: Y.Doc | undefined;
+
+  try {
+    await app.rolay.auth.upsertUser({
+      username: "writer1",
+      password: "secret",
+      displayName: "Writer One",
+      globalRole: "writer"
+    });
+
+    const writerSession = await loginAs(app, "writer1", "secret", "writer-laptop");
+    const writerUser = writerSession.user as { id: string; displayName: string };
+    const createRoomResponse = await app.inject({
+      method: "POST",
+      url: "/v1/rooms",
+      headers: {
+        authorization: `Bearer ${writerSession.accessToken}`
+      },
+      payload: {
+        name: "Public Live Room"
+      }
+    });
+    assert.equal(createRoomResponse.statusCode, 201);
+    const roomId = createRoomResponse.json().workspace.id;
+
+    const createEntryResponse = await app.inject({
+      method: "POST",
+      url: `/v1/workspaces/${roomId}/ops/batch`,
+      headers: {
+        authorization: `Bearer ${writerSession.accessToken}`
+      },
+      payload: {
+        deviceId: "writer-device-1",
+        operations: [
+          {
+            opId: "op_public_live_markdown",
+            type: "create_markdown",
+            path: "Week-01.md"
+          }
+        ]
+      }
+    });
+    assert.equal(createEntryResponse.statusCode, 200);
+    const markdownEntry = createEntryResponse.json().results[0].entry;
+
+    const publishResponse = await app.inject({
+      method: "PATCH",
+      url: `/v1/rooms/${roomId}/publication`,
+      headers: {
+        authorization: `Bearer ${writerSession.accessToken}`
+      },
+      payload: {
+        enabled: true
+      }
+    });
+    assert.equal(publishResponse.statusCode, 200);
+
+    await app.listen({
+      host: "127.0.0.1",
+      port: 0
+    });
+    const address = app.server.address();
+    assert.ok(address && typeof address === "object");
+    const wsUrl = `ws://127.0.0.1:${address.port}/v1/crdt`;
+    (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
+
+    const writerTokenResponse = await app.inject({
+      method: "POST",
+      url: `/v1/files/${markdownEntry.id}/crdt-token`,
+      headers: {
+        authorization: `Bearer ${writerSession.accessToken}`
+      }
+    });
+    assert.equal(writerTokenResponse.statusCode, 200);
+
+    const publicTokenResponse = await app.inject({
+      method: "POST",
+      url: `/public/api/rooms/${roomId}/markdown/${markdownEntry.id}/crdt-token`
+    });
+    assert.equal(publicTokenResponse.statusCode, 200);
+
+    writerDoc = new Y.Doc();
+    publicDoc = new Y.Doc();
+    const writerText = writerDoc.getText("content");
+    const publicText = publicDoc.getText("content");
+    let writerSynced = false;
+    let publicSynced = false;
+
+    writerProvider = new HocuspocusProvider({
+      url: wsUrl,
+      name: markdownEntry.docId,
+      document: writerDoc,
+      token: writerTokenResponse.json().token,
+      onSynced: ({ state }) => {
+        if (state) {
+          writerSynced = true;
+        }
+      }
+    });
+    publicProvider = new HocuspocusProvider({
+      url: wsUrl,
+      name: markdownEntry.docId,
+      document: publicDoc,
+      token: publicTokenResponse.json().token,
+      onSynced: ({ state }) => {
+        if (state) {
+          publicSynced = true;
+        }
+      }
+    });
+    publicProvider.awareness?.setLocalState(null);
+
+    await waitFor(() => writerSynced && publicSynced);
+    writerText.insert(0, "Live public update");
+    await waitFor(() => publicText.toString() === "Live public update");
+
+    writerProvider.setAwarenessField("user", {
+      userId: writerUser.id,
+      displayName: writerUser.displayName,
+      color: "#8b5cf6"
+    });
+    writerProvider.setAwarenessField("selection", {
+      anchor: 5,
+      head: 11
+    });
+
+    await waitFor(() =>
+      [...(publicProvider!.awareness?.getStates().values() ?? [])].some((state) => {
+        const record = state as Record<string, unknown>;
+        const user = record.user as Record<string, unknown> | undefined;
+        const selection = record.selection as Record<string, unknown> | undefined;
+        return (
+          user?.displayName === "Writer One" &&
+          selection?.anchor === 5 &&
+          selection?.head === 11
+        );
+      })
+    );
+
+    assert.equal(
+      app.rolay.notePresence
+        .getSnapshot(roomId)
+        .notes.every((note) =>
+          note.viewers.every((viewer) => viewer.displayName !== "Public Visitor")
+        ),
+      true
+    );
+  } finally {
+    writerProvider?.destroy();
+    publicProvider?.destroy();
+    writerDoc?.destroy();
+    publicDoc?.destroy();
+    await app.close();
+    await cleanupTestEnv(env);
+  }
+});
+
 test("public markdown CRDT token is read-only and does not publish public presence", async () => {
   const env = createTestEnv({
     crdtStoreDebounceMs: 50,

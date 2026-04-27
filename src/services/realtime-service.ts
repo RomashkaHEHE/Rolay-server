@@ -68,41 +68,18 @@ function readVarString(payload: Uint8Array, offsetRef: { offset: number }): stri
   return new TextDecoder().decode(payload.slice(start, end));
 }
 
-function readVarUint8Array(payload: Uint8Array, offsetRef: { offset: number }): Uint8Array {
-  const length = readVarUint(payload, offsetRef);
-  const start = offsetRef.offset;
-  const end = start + length;
-  if (end > payload.byteLength) {
-    throw createRealtimeError("malformed-message");
-  }
-  offsetRef.offset = end;
-  return payload.slice(start, end);
-}
-
-function parseHocuspocusMessage(payload: Uint8Array): { type: number; awarenessStates: unknown[] } {
+function parseHocuspocusMessage(payload: Uint8Array): {
+  type: number;
+  typeOffset: number;
+} {
   const offsetRef = { offset: 0 };
   readVarString(payload, offsetRef);
+  const typeOffset = offsetRef.offset;
   const type = readVarUint(payload, offsetRef);
-  if (type !== 1) {
-    return {
-      type,
-      awarenessStates: []
-    };
-  }
-
-  const awarenessUpdate = readVarUint8Array(payload, offsetRef);
-  const awarenessOffsetRef = { offset: 0 };
-  const stateCount = readVarUint(awarenessUpdate, awarenessOffsetRef);
-  const states: unknown[] = [];
-  for (let index = 0; index < stateCount; index += 1) {
-    readVarUint(awarenessUpdate, awarenessOffsetRef);
-    readVarUint(awarenessUpdate, awarenessOffsetRef);
-    states.push(JSON.parse(readVarString(awarenessUpdate, awarenessOffsetRef)) as unknown);
-  }
 
   return {
     type,
-    awarenessStates: states
+    typeOffset
   };
 }
 
@@ -327,16 +304,13 @@ export class RealtimeService {
     if (message.type === 5 || message.type === 6) {
       throw createRealtimeError("public-readonly-message");
     }
-    if (
-      message.type === 1 &&
-      message.awarenessStates.some(
-        (state) =>
-          typeof state === "object" &&
-          state !== null &&
-          Object.keys(state).length > 0
-      )
-    ) {
-      throw createRealtimeError("public-readonly-awareness");
+    if (message.type === 1) {
+      // Public viewers need to receive collaborator awareness for read-only cursors, but they must
+      // never contribute their own presence. Hocuspocus has no "drop only this awareness update"
+      // hook, so we turn inbound public awareness into a harmless query-awareness request. The
+      // server replies with the current authenticated collaborators' awareness and does not apply
+      // the public client's state to the shared document.
+      payload.update[message.typeOffset] = 3;
     }
   }
 

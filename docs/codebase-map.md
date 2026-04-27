@@ -276,7 +276,9 @@ This is another critical split.
 - production copy: `Dockerfile`
 
 The app is intentionally read-only. It stores last opened room/file in cookies and lazy-loads the
-current Markdown/Excalidraw content instead of preloading all notes.
+current Markdown/Excalidraw content instead of preloading all notes. Markdown uses read-only CRDT
+connections for live text and authenticated member cursors; public visitor awareness is filtered by
+`src/services/realtime-service.ts`.
 
 ## Tests
 

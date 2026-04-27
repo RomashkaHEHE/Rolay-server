@@ -61,6 +61,13 @@ Protect:
 - control request flow
 - separate live scene snapshot storage
 
+### 6. Public Viewers Observe, They Do Not Join
+
+Public website viewers may receive live Markdown text and authenticated member awareness so cursors
+can render in read-only mode. They must not publish their own awareness or appear in room note
+presence. The server enforces this by converting inbound public awareness messages into
+query-awareness requests in `src/services/realtime-service.ts`.
+
 ## What Usually Breaks When These Boundaries Blur
 
 - clients interpret the wrong SSE stream

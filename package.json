@@ -20,11 +20,13 @@
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.3.4",
+    "@codemirror/language": "^6.12.3",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.8",
     "@excalidraw/excalidraw": "^0.17.6",
     "@hocuspocus/provider": "^3.4.4",
     "@hocuspocus/server": "^3.4.4",
+    "@lezer/highlight": "^1.2.3",
     "fastify": "^5.0.0",
     "katex": "^0.16.45",
     "minio": "^8.0.7",

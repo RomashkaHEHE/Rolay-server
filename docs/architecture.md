@@ -193,8 +193,8 @@ The public web app deliberately uses a narrower contract than the authenticated 
 - image files are exposed only through an `assets` map so Markdown embeds can resolve them without
   listing all binary files in the public tree
 - public blob reads are limited to image binaries and Excalidraw blobs
-- public Markdown CRDT sessions are read-only and reject non-empty public awareness so visitors do
-  not appear as collaborators
+- public Markdown CRDT sessions are read-only; inbound public awareness is treated as an awareness
+  query so visitors can see member cursors without publishing visitor presence
 
 Disabling publication invalidates public CRDT tokens and closes room Markdown connections. Private
 plugin clients can reconnect with normal authenticated tokens.
