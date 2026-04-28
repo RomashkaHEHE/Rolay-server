@@ -253,14 +253,11 @@ select {
 }
 
 .folder-caret-static {
-  color: rgba(170, 161, 147, 0.58);
+  color: transparent;
 }
 
 .folder-caret-static::before {
-  width: 11px;
-  height: 3px;
-  border-radius: 999px;
-  clip-path: none;
+  display: none;
 }
 
 .folder-entry:hover .folder-caret-static {
