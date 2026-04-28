@@ -346,7 +346,7 @@ function renderTreeNode(node: TreeNode, level: number): void {
     const button = document.createElement("button");
     button.className = `entry folder-entry ${folder.noteEntry?.id === state.entryId ? "active" : ""}`;
     button.type = "button";
-    button.style.paddingLeft = `${10 + level * 16}px`;
+    applyTreeIndent(button, level, 10 + level * 16);
     if (canExpand) {
       button.setAttribute("aria-expanded", String(expanded));
     }
@@ -382,7 +382,7 @@ function renderTreeNode(node: TreeNode, level: number): void {
     const button = document.createElement("button");
     button.className = `entry file-entry ${file.id === state.entryId ? "active" : ""}`;
     button.type = "button";
-    button.style.paddingLeft = `${32 + level * 16}px`;
+    applyTreeIndent(button, level, 32 + level * 16);
     button.innerHTML = `
       <span class="file-glyph ${file.kind === "excalidraw" ? "file-glyph-drawing" : ""}" aria-hidden="true"></span>
       <span class="entry-label">${escapeHtml(displayFilename(file.path))}</span>
@@ -393,6 +393,19 @@ function renderTreeNode(node: TreeNode, level: number): void {
     });
     entryList.append(button);
   }
+}
+
+function applyTreeIndent(button: HTMLElement, level: number, contentOffset: number): void {
+  button.style.paddingLeft = `${contentOffset}px`;
+  if (level <= 0) {
+    return;
+  }
+
+  const branchX = 18 + (level - 1) * 16;
+  button.classList.add("entry-nested");
+  button.style.setProperty("--tree-guide-width", `${20 + (level - 1) * 16}px`);
+  button.style.setProperty("--tree-branch-x", `${branchX}px`);
+  button.style.setProperty("--tree-branch-width", `${Math.max(8, contentOffset - branchX)}px`);
 }
 
 function hasVisibleChildren(folder: TreeNode): boolean {

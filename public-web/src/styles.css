@@ -156,9 +156,11 @@ select {
   display: grid;
   gap: 2px;
   margin-top: 22px;
+  --tree-guide-color: rgba(154, 181, 214, 0.18);
 }
 
 .entry {
+  position: relative;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -170,6 +172,40 @@ select {
   border-radius: var(--radius-xs);
   cursor: pointer;
   text-align: left;
+}
+
+.entry > * {
+  position: relative;
+  z-index: 1;
+}
+
+.entry-nested::before,
+.entry-nested::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.entry-nested::before {
+  top: -3px;
+  bottom: -3px;
+  left: 0;
+  width: var(--tree-guide-width);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 18px,
+      var(--tree-guide-color) 18px 19px,
+      transparent 19px 34px
+    );
+}
+
+.entry-nested::after {
+  top: 50%;
+  left: var(--tree-branch-x);
+  width: var(--tree-branch-width);
+  height: 1px;
+  background: var(--tree-guide-color);
 }
 
 .entry button {
