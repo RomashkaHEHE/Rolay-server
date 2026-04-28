@@ -210,6 +210,9 @@ select {
 
 .folder-caret-static {
   color: rgba(170, 161, 147, 0.58);
+  font-size: 15px;
+  font-weight: 900;
+  transform: scaleX(1.18);
 }
 
 .folder-entry:hover .folder-caret-static {
