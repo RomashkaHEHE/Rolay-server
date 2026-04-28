@@ -744,7 +744,8 @@ h1 {
 .note-image {
   display: grid;
   gap: 8px;
-  max-width: min(820px, 94%);
+  width: fit-content;
+  max-width: 100%;
   margin: 14px 0;
   padding: 10px;
   border: 1px solid var(--line);

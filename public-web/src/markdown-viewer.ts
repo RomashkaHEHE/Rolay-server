@@ -69,6 +69,17 @@ interface RenderContext {
   assets: Record<string, PublicAsset>;
 }
 
+interface EmbedImageSize {
+  width?: number;
+  height?: number;
+}
+
+interface EmbedTarget {
+  target: string;
+  alias?: string;
+  size?: EmbedImageSize;
+}
+
 interface SourceMap {
   lineOffsets: number[];
   lineLengths: number[];
@@ -740,7 +751,8 @@ function renderInline(raw: string, context: RenderContext): string {
   let value = raw;
 
   value = value.replace(/!\[\[([^\]]+)]]|!\[([^\]]*)]\(([^)]+)\)/g, (match, wikiTarget, alt, mdTarget) => {
-    const target = splitEmbedTarget(String(wikiTarget ?? mdTarget ?? "").trim()).target;
+    const embed = splitEmbedTarget(String(wikiTarget ?? mdTarget ?? "").trim());
+    const target = embed.target;
     const asset = resolveAsset(context.assets, target, context.currentEntryPath);
     if (!asset) {
       const entry = resolveEntry(context.entries, target, context.currentEntryPath);
@@ -749,8 +761,8 @@ function renderInline(raw: string, context: RenderContext): string {
       }
       return match;
     }
-    const caption = String(alt ?? asset.path);
-    return reserve(renderImage(asset, caption));
+    const caption = String(alt || embed.alias || asset.path);
+    return reserve(renderImage(asset, caption, embed.size));
   });
 
   value = value.replace(/`([^`]+)`/g, (_match, code) => {
@@ -801,13 +813,31 @@ function renderInline(raw: string, context: RenderContext): string {
   return html;
 }
 
-function renderImage(asset: PublicAsset, caption: string): string {
+function renderImage(asset: PublicAsset, caption: string, size?: EmbedImageSize): string {
+  const sizeStyle = imageSizeStyle(size);
   return [
     `<figure class="note-image">`,
-    `<img loading="lazy" decoding="async" src="${escapeAttribute(asset.contentUrl)}" alt="${escapeAttribute(caption)}">`,
+    `<img loading="lazy" decoding="async" src="${escapeAttribute(asset.contentUrl)}" alt="${escapeAttribute(caption)}"${sizeStyle}>`,
     `<figcaption>${escapeHtml(asset.path)}</figcaption>`,
     `</figure>`
   ].join("");
+}
+
+function imageSizeStyle(size?: EmbedImageSize): string {
+  if (!size?.width && !size?.height) {
+    return "";
+  }
+
+  const declarations: string[] = [];
+  if (size.width) {
+    declarations.push(`width: min(100%, ${size.width}px)`);
+  }
+  if (size.height) {
+    declarations.push(`height: ${size.height}px`, "object-fit: contain");
+  } else {
+    declarations.push("height: auto");
+  }
+  return ` style="${escapeAttribute(declarations.join("; "))}"`;
 }
 
 function renderEntryEmbedPlaceholder(entry: PublicEntry, target: string): string {
@@ -1429,12 +1459,37 @@ function resolveEntry(
     .at(0)?.entry;
 }
 
-function splitEmbedTarget(value: string): { target: string; alias?: string } {
+function splitEmbedTarget(value: string): EmbedTarget {
   const [target, alias] = value.split("|", 2);
+  const cleanAlias = alias?.trim();
+  const size = cleanAlias ? parseEmbedImageSize(cleanAlias) : null;
   return {
     target: target?.trim() ?? value.trim(),
-    ...(alias?.trim() ? { alias: alias.trim() } : {})
+    ...(cleanAlias && !size ? { alias: cleanAlias } : {}),
+    ...(size ? { size } : {})
   };
+}
+
+function parseEmbedImageSize(value: string): EmbedImageSize | null {
+  const widthOnly = value.match(/^(\d{1,5})$/);
+  if (widthOnly) {
+    const width = parsePositivePixel(widthOnly[1]!);
+    return width ? { width } : null;
+  }
+
+  const size = value.match(/^(\d{1,5})x(\d{1,5})$/i);
+  if (!size) {
+    return null;
+  }
+
+  const width = parsePositivePixel(size[1]!);
+  const height = parsePositivePixel(size[2]!);
+  return width && height ? { width, height } : null;
+}
+
+function parsePositivePixel(value: string): number | null {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function normalizeEmbedTarget(target: string): string {
