@@ -7,6 +7,11 @@ interface ExcalidrawScene {
   files?: Record<string, unknown>;
 }
 
+const DARK_DRAWING_BACKGROUND = "#151821";
+const MIN_DRAWING_SCALE = 0.25;
+const MAX_DRAWING_SCALE = 4;
+const DRAWING_SCALE_STEP = 1.2;
+
 export async function renderDrawing(raw: string, drawingHost: HTMLElement): Promise<void> {
   const scene = parseExcalidrawScene(raw);
   if (!scene) {
@@ -31,17 +36,15 @@ async function renderOfficialExcalidraw(
   scene: ExcalidrawScene,
   drawingHost: HTMLElement
 ): Promise<void> {
+  const interactive = shouldUseInteractiveViewport(drawingHost);
   const elements = restoreElements((scene.elements ?? []) as never[], null);
   const appState = restoreAppState(
     {
       ...(scene.appState ?? {}),
-      theme: "light",
-      viewBackgroundColor:
-        typeof scene.appState?.viewBackgroundColor === "string"
-          ? scene.appState.viewBackgroundColor
-          : "#f8f4e8",
+      theme: "dark",
+      viewBackgroundColor: DARK_DRAWING_BACKGROUND,
       exportBackground: true,
-      exportWithDarkMode: false
+      exportWithDarkMode: true
     },
     null
   );
@@ -56,12 +59,17 @@ async function renderOfficialExcalidraw(
   svg.setAttribute("role", "img");
   svg.setAttribute("aria-label", "Excalidraw drawing");
   drawingHost.innerHTML = "";
-  drawingHost.append(svg);
+  if (interactive) {
+    mountInteractiveDrawing(drawingHost, svg);
+  } else {
+    drawingHost.append(svg);
+  }
 }
 
 function renderFallbackCanvas(scene: ExcalidrawScene, drawingHost: HTMLElement): void {
-  drawingHost.innerHTML = `<canvas class="drawing-canvas"></canvas>`;
-  const canvas = drawingHost.querySelector<HTMLCanvasElement>("canvas")!;
+  const interactive = shouldUseInteractiveViewport(drawingHost);
+  const canvas = document.createElement("canvas");
+  canvas.className = "drawing-canvas";
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     return;
@@ -77,6 +85,8 @@ function renderFallbackCanvas(scene: ExcalidrawScene, drawingHost: HTMLElement):
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
   ctx.scale(ratio, ratio);
+  ctx.fillStyle = DARK_DRAWING_BACKGROUND;
+  ctx.fillRect(0, 0, width, height);
   ctx.translate(48 - bounds.minX, 48 - bounds.minY);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -84,6 +94,178 @@ function renderFallbackCanvas(scene: ExcalidrawScene, drawingHost: HTMLElement):
   for (const element of elements) {
     drawElement(ctx, element as Record<string, unknown>);
   }
+
+  drawingHost.innerHTML = "";
+  if (interactive) {
+    mountInteractiveDrawing(drawingHost, canvas);
+  } else {
+    drawingHost.append(canvas);
+  }
+}
+
+function shouldUseInteractiveViewport(drawingHost: HTMLElement): boolean {
+  return drawingHost.classList.contains("drawing-host");
+}
+
+function mountInteractiveDrawing(
+  drawingHost: HTMLElement,
+  surface: SVGSVGElement | HTMLCanvasElement
+): void {
+  let scale = 1;
+  let dragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let startScrollLeft = 0;
+  let startScrollTop = 0;
+
+  drawingHost.innerHTML = "";
+  const shell = document.createElement("div");
+  shell.className = "drawing-shell";
+  shell.innerHTML = `
+    <div class="drawing-toolbar" aria-label="Масштаб рисунка">
+      <button type="button" class="drawing-zoom-out" title="Уменьшить">−</button>
+      <span class="drawing-zoom-label">100%</span>
+      <button type="button" class="drawing-zoom-in" title="Увеличить">+</button>
+      <button type="button" class="drawing-zoom-reset" title="Сбросить масштаб">Сброс</button>
+    </div>
+    <div class="drawing-viewport" tabindex="0" aria-label="Excalidraw drawing viewport">
+      <div class="drawing-stage"></div>
+    </div>
+  `;
+
+  const viewport = shell.querySelector<HTMLElement>(".drawing-viewport")!;
+  const stage = shell.querySelector<HTMLElement>(".drawing-stage")!;
+  const zoomOut = shell.querySelector<HTMLButtonElement>(".drawing-zoom-out")!;
+  const zoomIn = shell.querySelector<HTMLButtonElement>(".drawing-zoom-in")!;
+  const zoomReset = shell.querySelector<HTMLButtonElement>(".drawing-zoom-reset")!;
+  const zoomLabel = shell.querySelector<HTMLElement>(".drawing-zoom-label")!;
+
+  stage.append(surface);
+  drawingHost.append(shell);
+
+  const baseSize = measureDrawingSurface(surface);
+  surface.style.width = `${baseSize.width}px`;
+  surface.style.height = `${baseSize.height}px`;
+  surface.style.maxWidth = "none";
+
+  const applyScale = () => {
+    stage.style.width = `${baseSize.width * scale}px`;
+    stage.style.height = `${baseSize.height * scale}px`;
+    surface.style.transform = `scale(${scale})`;
+    surface.style.transformOrigin = "0 0";
+    zoomLabel.textContent = `${Math.round(scale * 100)}%`;
+  };
+
+  const setScale = (nextScale: number, anchor?: { clientX: number; clientY: number }) => {
+    const previousScale = scale;
+    const normalized = clamp(nextScale, MIN_DRAWING_SCALE, MAX_DRAWING_SCALE);
+    if (normalized === previousScale) {
+      return;
+    }
+
+    if (!anchor) {
+      scale = normalized;
+      applyScale();
+      return;
+    }
+
+    const rect = viewport.getBoundingClientRect();
+    const anchorX = anchor.clientX - rect.left;
+    const anchorY = anchor.clientY - rect.top;
+    const contentX = anchorX + viewport.scrollLeft;
+    const contentY = anchorY + viewport.scrollTop;
+    const ratio = normalized / previousScale;
+
+    scale = normalized;
+    applyScale();
+    viewport.scrollLeft = contentX * ratio - anchorX;
+    viewport.scrollTop = contentY * ratio - anchorY;
+  };
+
+  zoomOut.addEventListener("click", () => setScale(scale / DRAWING_SCALE_STEP));
+  zoomIn.addEventListener("click", () => setScale(scale * DRAWING_SCALE_STEP));
+  zoomReset.addEventListener("click", () => {
+    setScale(1);
+    viewport.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+  });
+
+  viewport.addEventListener(
+    "wheel",
+    (event) => {
+      if (!event.ctrlKey && !event.metaKey) {
+        return;
+      }
+      event.preventDefault();
+      const direction = event.deltaY > 0 ? 1 / DRAWING_SCALE_STEP : DRAWING_SCALE_STEP;
+      setScale(scale * direction, { clientX: event.clientX, clientY: event.clientY });
+    },
+    { passive: false }
+  );
+
+  viewport.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    dragging = true;
+    dragStartX = event.clientX;
+    dragStartY = event.clientY;
+    startScrollLeft = viewport.scrollLeft;
+    startScrollTop = viewport.scrollTop;
+    viewport.classList.add("drawing-viewport-panning");
+    viewport.setPointerCapture(event.pointerId);
+  });
+
+  viewport.addEventListener("pointermove", (event) => {
+    if (!dragging) {
+      return;
+    }
+    event.preventDefault();
+    viewport.scrollLeft = startScrollLeft - (event.clientX - dragStartX);
+    viewport.scrollTop = startScrollTop - (event.clientY - dragStartY);
+  });
+
+  const stopDragging = (event: PointerEvent) => {
+    if (!dragging) {
+      return;
+    }
+    dragging = false;
+    viewport.classList.remove("drawing-viewport-panning");
+    if (viewport.hasPointerCapture(event.pointerId)) {
+      viewport.releasePointerCapture(event.pointerId);
+    }
+  };
+  viewport.addEventListener("pointerup", stopDragging);
+  viewport.addEventListener("pointercancel", stopDragging);
+  viewport.addEventListener("pointerleave", stopDragging);
+
+  applyScale();
+}
+
+function measureDrawingSurface(surface: SVGSVGElement | HTMLCanvasElement): {
+  width: number;
+  height: number;
+} {
+  const rect = surface.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    return { width: rect.width, height: rect.height };
+  }
+
+  if (surface instanceof SVGSVGElement && surface.viewBox.baseVal.width > 0) {
+    return {
+      width: surface.viewBox.baseVal.width,
+      height: Math.max(surface.viewBox.baseVal.height, 1)
+    };
+  }
+
+  return {
+    width: Number.parseFloat(surface.getAttribute("width") ?? "") || 720,
+    height: Number.parseFloat(surface.getAttribute("height") ?? "") || 420
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function parseExcalidrawScene(raw: string): ExcalidrawScene | null {
@@ -267,7 +449,7 @@ function drawElement(ctx: CanvasRenderingContext2D, element: Record<string, unkn
   const y = Number(element.y ?? 0);
   const width = Number(element.width ?? 0);
   const height = Number(element.height ?? 0);
-  const color = String(element.strokeColor ?? "#f2ecd7");
+  const color = darkDrawingColor(String(element.strokeColor ?? "#f2ecd7"));
   ctx.strokeStyle = color === "transparent" ? "#f2ecd7" : color;
   ctx.fillStyle = String(element.backgroundColor ?? "transparent");
   ctx.lineWidth = Number(element.strokeWidth ?? 2);
@@ -326,4 +508,10 @@ function fillAndStroke(ctx: CanvasRenderingContext2D, draw: () => void): void {
     ctx.fill();
   }
   ctx.stroke();
+}
+
+function darkDrawingColor(color: string): string {
+  return /^(#000|#000000|black|rgb\(0,\s*0,\s*0\))$/i.test(color.trim())
+    ? "#f2ecd7"
+    : color;
 }

@@ -169,7 +169,7 @@ async function refreshManifest(): Promise<void> {
   if (state.entryId) {
     const active = manifest.entries.find((entry) => entry.id === state.entryId);
     if (active) {
-      title.textContent = filename(active.path);
+      title.textContent = displayFilename(active.path);
       eyebrow.textContent = breadcrumb(active.path);
     }
   }
@@ -197,7 +197,7 @@ async function selectEntry(entryId: string): Promise<void> {
   state.entryId = entryId;
   setCookie("rolay_public_entry", entryId);
   renderEntries();
-  title.textContent = filename(entry.path);
+  title.textContent = displayFilename(entry.path);
   eyebrow.textContent = breadcrumb(entry.path);
   status.textContent = "";
   status.classList.add("hidden");
@@ -516,7 +516,9 @@ function updateActiveAnonymousViewerCount(): void {
 }
 
 function breadcrumb(filePath: string): string {
-  return normalizePath(filePath).split("/").join(" / ");
+  const parts = normalizePath(filePath).split("/");
+  const last = parts.pop();
+  return [...parts, last ? displayFilename(last) : ""].filter(Boolean).join(" / ");
 }
 
 function showEmpty(message: string): void {
