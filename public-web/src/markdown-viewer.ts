@@ -69,6 +69,11 @@ interface RenderContext {
   assets: Record<string, PublicAsset>;
 }
 
+interface SourceMap {
+  lineOffsets: number[];
+  lineLengths: number[];
+}
+
 export async function openMarkdownViewer(params: {
   entry: PublicEntry;
   manifest: PublicManifest;
@@ -120,9 +125,10 @@ export async function openMarkdownViewer(params: {
       entries: params.manifest.entries,
       assets
     };
-    article.replaceChildren(renderMarkdown(raw, context));
+    const normalizedRaw = normalizeLines(raw);
+    article.replaceChildren(renderMarkdown(normalizedRaw, context));
     await hydrateEmbeds(article, context);
-    renderRemoteCursors(article, remoteViewers);
+    renderRemoteCursors(article, remoteViewers, normalizedRaw);
   };
 
   const queueRender = () => {
@@ -200,8 +206,9 @@ export async function openMarkdownViewer(params: {
 
 function renderMarkdown(raw: string, context: RenderContext): DocumentFragment {
   const fragment = document.createDocumentFragment();
-  const content = stripFrontmatter(normalizeLines(raw));
-  renderBlocks(content.split("\n"), context, fragment);
+  const stripped = stripFrontmatterWithOffset(raw);
+  const lines = stripped.content.split("\n");
+  renderBlocks(lines, context, fragment, createSourceMap(lines, stripped.sourceOffset));
   if (!fragment.hasChildNodes()) {
     const empty = document.createElement("p");
     empty.className = "markdown-empty";
@@ -214,7 +221,8 @@ function renderMarkdown(raw: string, context: RenderContext): DocumentFragment {
 function renderBlocks(
   lines: string[],
   context: RenderContext,
-  target: ParentNode
+  target: ParentNode,
+  source?: SourceMap
 ): void {
   let index = 0;
 
@@ -225,6 +233,7 @@ function renderBlocks(
       continue;
     }
 
+    const blockStart = index;
     const fence = line.match(/^```(\w+)?\s*$/);
     if (fence) {
       const block = document.createElement("pre");
@@ -241,6 +250,7 @@ function renderBlocks(
       if (index < lines.length) {
         index++;
       }
+      tagSource(block, source, blockStart, index, "code");
       code.textContent = body.join("\n");
       block.append(code);
       target.appendChild(block);
@@ -251,27 +261,50 @@ function renderBlocks(
     if (displayMath) {
       const block = document.createElement("div");
       block.className = "math-block";
+      tagSource(block, source, index, displayMath.nextIndex, "math");
       renderKatex(displayMath.expression, true, block);
       target.appendChild(block);
       index = displayMath.nextIndex;
       continue;
     }
 
-    const callout = readCallout(lines, index);
+    const callout = readCallout(lines, index, source);
     if (callout) {
-      target.appendChild(renderCallout(callout.type, callout.title, callout.body, context));
+      const element = renderCallout(
+        callout.type,
+        callout.title,
+        callout.body,
+        context,
+        callout.bodySource
+      );
+      tagSource(element, source, index, callout.nextIndex, "callout");
+      target.appendChild(element);
       index = callout.nextIndex;
       continue;
     }
 
     if (/^>\s?/.test(line)) {
       const quoteLines: string[] = [];
+      const quoteOffsets: number[] = [];
       while (index < lines.length && /^>\s?/.test(lines[index] ?? "")) {
-        quoteLines.push((lines[index] ?? "").replace(/^>\s?/, ""));
+        const quoteLine = lines[index] ?? "";
+        const marker = quoteLine.match(/^>\s?/);
+        quoteLines.push(quoteLine.replace(/^>\s?/, ""));
+        if (source) {
+          quoteOffsets.push((source.lineOffsets[index] ?? 0) + (marker?.[0].length ?? 0));
+        }
         index++;
       }
       const quote = document.createElement("blockquote");
-      renderBlocks(quoteLines, context, quote);
+      tagSource(quote, source, blockStart, index, "quote");
+      renderBlocks(
+        quoteLines,
+        context,
+        quote,
+        quoteOffsets.length > 0
+          ? { lineOffsets: quoteOffsets, lineLengths: quoteLines.map((quoteLine) => quoteLine.length) }
+          : undefined
+      );
       target.appendChild(quote);
       continue;
     }
@@ -280,6 +313,7 @@ function renderBlocks(
     if (heading) {
       const level = heading[1]!.length;
       const element = document.createElement(`h${level}`);
+      tagSource(element, source, index, index + 1, "heading");
       element.innerHTML = renderInline(heading[2]!, context);
       target.appendChild(element);
       index++;
@@ -287,21 +321,27 @@ function renderBlocks(
     }
 
     if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
-      target.appendChild(document.createElement("hr"));
+      const hr = document.createElement("hr");
+      tagSource(hr, source, index, index + 1, "hr");
+      target.appendChild(hr);
       index++;
       continue;
     }
 
     const list = readList(lines, index);
     if (list) {
-      target.appendChild(renderList(list.ordered, list.items, context));
+      const element = renderList(list.ordered, list.items, context);
+      tagSource(element, source, index, list.nextIndex, "list");
+      target.appendChild(element);
       index = list.nextIndex;
       continue;
     }
 
     const table = readTable(lines, index);
     if (table) {
-      target.appendChild(renderTable(table.rows, context));
+      const element = renderTable(table.rows, context);
+      tagSource(element, source, index, table.nextIndex, "table");
+      target.appendChild(element);
       index = table.nextIndex;
       continue;
     }
@@ -316,6 +356,7 @@ function renderBlocks(
       index++;
     }
     const p = document.createElement("p");
+    tagSource(p, source, blockStart, index, "paragraph");
     p.innerHTML = renderInline(paragraph.join("\n"), context);
     target.appendChild(p);
   }
@@ -339,47 +380,75 @@ function readDisplayMath(
   index: number
 ): { expression: string; nextIndex: number } | null {
   const line = lines[index]?.trim() ?? "";
-  const singleDollar = line.match(/^\$\$([\s\S]+)\$\$$/);
-  if (singleDollar) {
-    return {
-      expression: singleDollar[1]!.trim(),
-      nextIndex: index + 1
-    };
+  if (line.startsWith("$$")) {
+    return readDelimitedDisplayMath(lines, index, "$$", "$$");
+  }
+  if (line.startsWith("\\[")) {
+    return readDelimitedDisplayMath(lines, index, "\\[", "\\]");
   }
 
-  const singleBracket = line.match(/^\\\[([\s\S]+)\\\]$/);
-  if (singleBracket) {
-    return {
-      expression: singleBracket[1]!.trim(),
-      nextIndex: index + 1
-    };
-  }
+  return null;
+}
 
-  if (line !== "$$" && line !== "\\[") {
+function readDelimitedDisplayMath(
+  lines: string[],
+  index: number,
+  opening: "$$" | "\\[",
+  closing: "$$" | "\\]"
+): { expression: string; nextIndex: number } | null {
+  const firstLine = lines[index]?.trim() ?? "";
+  if (!firstLine.startsWith(opening)) {
     return null;
   }
 
-  const closing = line === "$$" ? "$$" : "\\]";
   const body: string[] = [];
+  const afterOpening = firstLine.slice(opening.length);
+  const sameLineClose = afterOpening.indexOf(closing);
+  if (sameLineClose >= 0) {
+    return {
+      expression: afterOpening.slice(0, sameLineClose).trim(),
+      nextIndex: index + 1
+    };
+  }
+
+  if (afterOpening.trim() !== "") {
+    body.push(afterOpening);
+  }
+
   let cursor = index + 1;
-  while (cursor < lines.length && (lines[cursor]?.trim() ?? "") !== closing) {
-    body.push(lines[cursor] ?? "");
+  while (cursor < lines.length) {
+    const current = lines[cursor] ?? "";
+    const closeIndex = current.indexOf(closing);
+    if (closeIndex >= 0) {
+      const beforeClosing = current.slice(0, closeIndex);
+      if (beforeClosing.trim() !== "") {
+        body.push(beforeClosing);
+      }
+      return {
+        expression: body.join("\n").trim(),
+        nextIndex: cursor + 1
+      };
+    }
+
+    body.push(current);
     cursor++;
   }
-  if (cursor >= lines.length) {
-    return null;
-  }
 
-  return {
-    expression: body.join("\n").trim(),
-    nextIndex: cursor + 1
-  };
+  return null;
 }
 
 function readCallout(
   lines: string[],
-  index: number
-): { type: string; title: string; body: string[]; fold: "+" | "-" | null; nextIndex: number } | null {
+  index: number,
+  source?: SourceMap
+): {
+  type: string;
+  title: string;
+  body: string[];
+  bodySource?: SourceMap;
+  fold: "+" | "-" | null;
+  nextIndex: number;
+} | null {
   const first = lines[index] ?? "";
   const match = first.match(/^>\s*\[!([A-Za-z0-9_-]+)]([+-])?\s*(.*)$/);
   if (!match) {
@@ -387,9 +456,15 @@ function readCallout(
   }
 
   const body: string[] = [];
+  const bodyOffsets: number[] = [];
   let cursor = index + 1;
   while (cursor < lines.length && /^>\s?/.test(lines[cursor] ?? "")) {
-    body.push((lines[cursor] ?? "").replace(/^>\s?/, ""));
+    const bodyLine = lines[cursor] ?? "";
+    const marker = bodyLine.match(/^>\s?/);
+    body.push(bodyLine.replace(/^>\s?/, ""));
+    if (source) {
+      bodyOffsets.push((source.lineOffsets[cursor] ?? 0) + (marker?.[0].length ?? 0));
+    }
     cursor++;
   }
 
@@ -398,6 +473,9 @@ function readCallout(
     fold: match[2] === "+" || match[2] === "-" ? match[2] : null,
     title: match[3]?.trim() || calloutTitle(match[1]!),
     body,
+    ...(bodyOffsets.length > 0
+      ? { bodySource: { lineOffsets: bodyOffsets, lineLengths: body.map((line) => line.length) } }
+      : {}),
     nextIndex: cursor
   };
 }
@@ -406,7 +484,8 @@ function renderCallout(
   type: string,
   title: string,
   body: string[],
-  context: RenderContext
+  context: RenderContext,
+  bodySource?: SourceMap
 ): HTMLElement {
   const canonicalType = calloutCanonicalType(type);
   const callout = document.createElement("aside");
@@ -420,7 +499,7 @@ function renderCallout(
 
   const content = document.createElement("div");
   content.className = "callout-content";
-  renderBlocks(body, context, content);
+  renderBlocks(body, context, content, bodySource);
   callout.append(content);
   return callout;
 }
@@ -515,6 +594,28 @@ function renderTable(rows: string[][], context: RenderContext): HTMLElement {
 
 function splitTableRow(line: string): string[] {
   return line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|");
+}
+
+function tagSource(
+  element: HTMLElement,
+  source: SourceMap | undefined,
+  startLine: number,
+  endLine: number,
+  kind: string
+): void {
+  if (!source) {
+    return;
+  }
+
+  const sourceStart = source.lineOffsets[startLine];
+  if (sourceStart === undefined) {
+    return;
+  }
+
+  const sourceEnd = sourceEndForLine(source, endLine);
+  element.dataset.sourceStart = String(sourceStart);
+  element.dataset.sourceEnd = String(Math.max(sourceStart, sourceEnd));
+  element.dataset.sourceKind = kind;
 }
 
 function renderInline(raw: string, context: RenderContext): string {
@@ -782,7 +883,7 @@ function renderRemotePresence(
   }
 }
 
-function renderRemoteCursors(article: HTMLElement, viewers: RemoteViewer[]): void {
+function renderRemoteCursors(article: HTMLElement, viewers: RemoteViewer[], sourceText: string): void {
   article.querySelector(".remote-cursor-layer")?.remove();
   const selectedViewers = viewers.filter((viewer) => viewer.selection);
   if (selectedViewers.length === 0) {
@@ -795,7 +896,7 @@ function renderRemoteCursors(article: HTMLElement, viewers: RemoteViewer[]): voi
 
   for (const viewer of selectedViewers) {
     const position = Math.max(0, viewer.selection!.head);
-    const rect = caretRectAtTextOffset(article, position);
+    const rect = caretRectAtSourceOffset(article, sourceText, position);
     if (!rect) {
       continue;
     }
@@ -816,43 +917,137 @@ function renderRemoteCursors(article: HTMLElement, viewers: RemoteViewer[]): voi
   }
 }
 
-function caretRectAtTextOffset(root: HTMLElement, targetOffset: number): DOMRect | null {
+function caretRectAtSourceOffset(
+  article: HTMLElement,
+  sourceText: string,
+  sourceOffset: number
+): DOMRect | null {
+  // Awareness selections are offsets in the Markdown source, while the preview DOM hides syntax.
+  // Keep cursor placement scoped to the rendered block that owns the original source range.
+  const block = findSourceBlock(article, sourceOffset);
+  if (!block) {
+    return null;
+  }
+
+  const sourceStart = Number(block.dataset.sourceStart ?? "0");
+  const sourceEnd = Math.max(sourceStart, Number(block.dataset.sourceEnd ?? sourceStart));
+  const clampedOffset = Math.max(sourceStart, Math.min(sourceOffset, sourceEnd));
+
+  if (block.dataset.sourceKind === "math") {
+    return caretRectInBlockBySourceRatio(article, block, sourceStart, sourceEnd, clampedOffset);
+  }
+
+  const sourcePrefix = sourceText.slice(sourceStart, clampedOffset);
+  const visibleOffset = projectSourceToVisibleText(sourcePrefix).length;
+  return caretRectAtTextOffset(block, visibleOffset, article);
+}
+
+function findSourceBlock(article: HTMLElement, sourceOffset: number): HTMLElement | null {
+  const candidates = [...article.querySelectorAll<HTMLElement>("[data-source-start][data-source-end]")];
+  const matches = candidates.filter((candidate) => {
+    const start = Number(candidate.dataset.sourceStart);
+    const end = Number(candidate.dataset.sourceEnd);
+    return Number.isFinite(start) && Number.isFinite(end) && start <= sourceOffset && sourceOffset <= end;
+  });
+
+  return matches.sort((left, right) => {
+    const leftSpan = Number(left.dataset.sourceEnd) - Number(left.dataset.sourceStart);
+    const rightSpan = Number(right.dataset.sourceEnd) - Number(right.dataset.sourceStart);
+    if (leftSpan !== rightSpan) {
+      return leftSpan - rightSpan;
+    }
+    return left.contains(right) ? 1 : -1;
+  })[0] ?? null;
+}
+
+function caretRectInBlockBySourceRatio(
+  article: HTMLElement,
+  block: HTMLElement,
+  sourceStart: number,
+  sourceEnd: number,
+  sourceOffset: number
+): DOMRect | null {
+  const blockRect = block.getBoundingClientRect();
+  if (blockRect.width === 0 && blockRect.height === 0) {
+    return null;
+  }
+
+  const articleRect = article.getBoundingClientRect();
+  const ratio =
+    sourceEnd > sourceStart ? (sourceOffset - sourceStart) / (sourceEnd - sourceStart) : 0;
+  const clampedRatio = Math.max(0.04, Math.min(0.96, ratio));
+  const height = Math.max(18, Math.min(blockRect.height, blockRect.height - 16));
+  return new DOMRect(
+    blockRect.left - articleRect.left + blockRect.width * clampedRatio,
+    blockRect.top - articleRect.top + Math.max(4, (blockRect.height - height) / 2),
+    2,
+    height
+  );
+}
+
+function caretRectAtTextOffset(
+  root: HTMLElement,
+  targetOffset: number,
+  coordinateRoot = root
+): DOMRect | null {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      return node.parentElement?.closest(".remote-cursor-layer")
+      return node.parentElement?.closest(".remote-cursor-layer,[aria-hidden='true']")
         ? NodeFilter.FILTER_REJECT
         : NodeFilter.FILTER_ACCEPT;
     }
   });
   let offset = 0;
+  let lastTextNode: Text | null = null;
   let current = walker.nextNode();
 
   while (current) {
+    lastTextNode = current as Text;
     const text = current.textContent ?? "";
     const nextOffset = offset + text.length;
     if (targetOffset <= nextOffset) {
-      const range = document.createRange();
-      range.setStart(current, Math.max(0, Math.min(text.length, targetOffset - offset)));
-      range.collapse(true);
-      const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
-      range.detach();
-      if (!rect || rect.width === 0 && rect.height === 0) {
-        return null;
-      }
-      const rootRect = root.getBoundingClientRect();
-      return new DOMRect(
-        rect.left - rootRect.left,
-        rect.top - rootRect.top,
-        Math.max(2, rect.width),
-        Math.max(18, rect.height)
+      return textNodeCaretRect(
+        current as Text,
+        Math.max(0, Math.min(text.length, targetOffset - offset)),
+        coordinateRoot
       );
     }
 
-    offset = nextOffset + 1;
+    offset = nextOffset;
     current = walker.nextNode();
   }
 
-  return null;
+  if (lastTextNode) {
+    return textNodeCaretRect(lastTextNode, lastTextNode.textContent?.length ?? 0, coordinateRoot);
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  const coordinateRect = coordinateRoot.getBoundingClientRect();
+  return new DOMRect(
+    rootRect.left - coordinateRect.left,
+    rootRect.top - coordinateRect.top,
+    2,
+    Math.max(18, rootRect.height)
+  );
+}
+
+function textNodeCaretRect(node: Text, offset: number, coordinateRoot: HTMLElement): DOMRect | null {
+  const range = document.createRange();
+  range.setStart(node, offset);
+  range.collapse(true);
+  const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+  range.detach();
+  if (!rect || rect.width === 0 && rect.height === 0) {
+    return null;
+  }
+
+  const rootRect = coordinateRoot.getBoundingClientRect();
+  return new DOMRect(
+    rect.left - rootRect.left,
+    rect.top - rootRect.top,
+    Math.max(2, rect.width),
+    Math.max(18, rect.height)
+  );
 }
 
 function extractUser(record: Record<string, unknown>): { label: string; color: string } | null {
@@ -1007,8 +1202,99 @@ function stripFrontmatter(raw: string): string {
   return raw.replace(/^---\n[\s\S]*?\n---\n?/, "");
 }
 
+function stripFrontmatterWithOffset(raw: string): { content: string; sourceOffset: number } {
+  const match = raw.match(/^---\n[\s\S]*?\n---(?:\n|$)/);
+  if (!match) {
+    return { content: raw, sourceOffset: 0 };
+  }
+
+  return {
+    content: raw.slice(match[0].length),
+    sourceOffset: match[0].length
+  };
+}
+
 function normalizeLines(raw: string): string {
   return raw.replace(/\r\n?/g, "\n");
+}
+
+function createSourceMap(lines: string[], sourceOffset: number): SourceMap {
+  let offset = sourceOffset;
+  const lineOffsets: number[] = [];
+  for (const line of lines) {
+    lineOffsets.push(offset);
+    offset += line.length + 1;
+  }
+
+  return {
+    lineOffsets,
+    lineLengths: lines.map((line) => line.length)
+  };
+}
+
+function sourceEndForLine(source: SourceMap, endLine: number): number {
+  const nextLineOffset = source.lineOffsets[endLine];
+  if (nextLineOffset !== undefined) {
+    return nextLineOffset;
+  }
+
+  const lastLine = Math.max(0, Math.min(endLine - 1, source.lineOffsets.length - 1));
+  return (source.lineOffsets[lastLine] ?? 0) + (source.lineLengths[lastLine] ?? 0);
+}
+
+function projectSourceToVisibleText(source: string): string {
+  return normalizeLines(source)
+    .split("\n")
+    .map((line) => projectSourceLineToVisibleText(line))
+    .join("\n");
+}
+
+function projectSourceLineToVisibleText(line: string): string {
+  let value = line;
+  value = value.replace(/^>\s*\[!([A-Za-z0-9_-]+)](?:[+-])?\s*/, "");
+  value = value.replace(/^>\s?/, "");
+  value = value.replace(/^#{1,6}\s+/, "");
+  value = value.replace(/^\s*(?:[-+*]|\d+[.)])\s+/, "");
+  if (/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(value)) {
+    return "";
+  }
+
+  value = value.replace(/^\s*\$\$+/, "");
+  value = value.replace(/\$\$+\s*$/, "");
+  value = value.replace(/^\s*\\\[/, "");
+  value = value.replace(/\\\]\s*$/, "");
+
+  return projectInlineSourceToVisibleText(value);
+}
+
+function projectInlineSourceToVisibleText(source: string): string {
+  let value = source;
+
+  value = value.replace(/!\[\[([^\]|]+)(?:\|([^\]]+))?]]/g, (_match, target, label) =>
+    String(label ?? target)
+  );
+  value = value.replace(/!\[([^\]]*)]\(([^)]+)\)/g, (_match, alt, target) =>
+    String(alt || filename(String(target)))
+  );
+  value = value.replace(/\[([^\]]+)]\(([^)]+)\)/g, "$1");
+  value = value.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?]]/g, (_match, target, label) =>
+    String(label ?? target)
+  );
+  value = value.replace(/`([^`]*)`/g, "$1");
+  value = value.replace(/\$\$([\s\S]*?)(?:\$\$)?/g, "$1");
+  value = value.replace(/\\\[([\s\S]*?)(?:\\\])?/g, "$1");
+  value = value.replace(/\\\(([\s\S]*?)(?:\\\))?/g, "$1");
+  value = value.replace(/(^|[^\\])\$([^\n$]*)(?:\$)?/g, "$1$2");
+  value = value.replace(/<font\b[^>]*>/gi, "");
+  value = value.replace(/<\/font>/gi, "");
+  value = value.replace(/<br\s*\/?>/gi, "\n");
+  value = value.replace(/<\/?(sub|sup)>/gi, "");
+  value = value.replace(/<\/?[^>]+>/g, "");
+  value = value.replace(/\*\*|__|~~/g, "");
+  value = value.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2");
+  value = value.replace(/(^|[^_])_([^_\n]+)_/g, "$1$2");
+
+  return value;
 }
 
 function calloutTitle(type: string): string {
