@@ -349,7 +349,7 @@ function renderTreeNode(node: TreeNode, level: number): void {
     button.setAttribute("aria-expanded", String(expanded));
     button.innerHTML = `
       <span class="folder-caret">${collapsed ? "▸" : "▾"}</span>
-      <span class="folder-glyph" aria-hidden="true"></span>
+      <span class="folder-glyph ${folder.noteEntry ? "folder-glyph-note" : ""}" aria-hidden="true"></span>
       <span class="entry-label">${escapeHtml(folder.name)}</span>
       ${folder.noteEntry ? '<span class="folder-note-dot" title="Folder note"></span>' : ""}
     `;
@@ -378,7 +378,7 @@ function renderTreeNode(node: TreeNode, level: number): void {
     button.style.paddingLeft = `${32 + level * 16}px`;
     button.innerHTML = `
       <span class="file-glyph ${file.kind === "excalidraw" ? "file-glyph-drawing" : ""}" aria-hidden="true"></span>
-      <span class="entry-label">${escapeHtml(filename(file.path))}</span>
+      <span class="entry-label">${escapeHtml(displayFilename(file.path))}</span>
       ${anonymousViewerCount(file.id) > 0 ? `<span class="entry-viewers">${anonymousViewerCount(file.id)}</span>` : ""}
     `;
     button.addEventListener("click", () => {
@@ -512,6 +512,12 @@ function cleanupLiveDocument(): void {
 
 function filename(filePath: string): string {
   return filePath.split("/").at(-1) ?? filePath;
+}
+
+function displayFilename(filePath: string): string {
+  return filename(filePath)
+    .replace(/\.excalidraw\.md$/i, "")
+    .replace(/\.md$/i, "");
 }
 
 function normalizePath(path: string): string {

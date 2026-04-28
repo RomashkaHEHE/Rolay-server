@@ -205,8 +205,13 @@ select {
 }
 
 .file-glyph-drawing {
+  border-color: rgba(116, 201, 154, 0.55);
+  background: rgba(116, 201, 154, 0.16);
+}
+
+.folder-glyph-note {
   border-color: rgba(209, 147, 88, 0.5);
-  background: rgba(209, 147, 88, 0.12);
+  background: rgba(154, 181, 214, 0.12);
 }
 
 .folder-note-dot {
