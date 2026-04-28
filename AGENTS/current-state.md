@@ -95,8 +95,8 @@ If you start another substantial feature, create a new task file before leaving 
 - Improved public Markdown list rendering so ordered lists preserve both `1.` and `1)` marker
   styles and display-math blocks can live inside list items.
 - Adjusted public web explorer affordances: file extensions are hidden in the tree, Excalidraw
-  entries use a green file glyph, and folder-note folders keep yellow folder outlines with a
-  Markdown-blue fill.
+  entries use a green file glyph, and folder-note folders use a yellow folder fill with a
+  Markdown-blue outline.
 
 ## Where To Look First
 

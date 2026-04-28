@@ -221,8 +221,8 @@ select {
 }
 
 .folder-glyph-note {
-  border-color: rgba(209, 147, 88, 0.5);
-  background: rgba(154, 181, 214, 0.12);
+  border-color: rgba(154, 181, 214, 0.62);
+  background: rgba(209, 147, 88, 0.16);
 }
 
 .folder-note-dot {
