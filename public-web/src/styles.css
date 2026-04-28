@@ -102,6 +102,7 @@ select {
 }
 
 .room-picker {
+  position: relative;
   display: grid;
   gap: 8px;
   color: var(--muted);
@@ -115,14 +116,24 @@ select {
   width: 100%;
   color: var(--text);
   background:
-    linear-gradient(45deg, transparent 50%, var(--accent) 50%) calc(100% - 17px) 50% / 6px 6px no-repeat,
-    linear-gradient(135deg, var(--accent) 50%, transparent 50%) calc(100% - 12px) 50% / 6px 6px no-repeat,
     linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015)),
     var(--panel-strong);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-xs);
   padding: 11px 34px 11px 12px;
   outline: none;
+}
+
+.room-picker::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  bottom: 16px;
+  width: 10px;
+  height: 6px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  pointer-events: none;
 }
 
 .room-picker select:focus {
