@@ -351,7 +351,7 @@ function renderTreeNode(node: TreeNode, level: number): void {
       button.setAttribute("aria-expanded", String(expanded));
     }
     button.innerHTML = `
-      <span class="folder-caret ${canExpand ? "" : "folder-caret-static"}">${canExpand ? (collapsed ? "▸" : "▾") : "-"}</span>
+      <span class="folder-caret ${canExpand ? (collapsed ? "folder-caret-collapsed" : "folder-caret-expanded") : "folder-caret-static"}" aria-hidden="true"></span>
       <span class="folder-glyph ${folder.noteEntry ? "folder-glyph-note" : ""}" aria-hidden="true"></span>
       <span class="entry-label">${escapeHtml(folder.name)}</span>
       ${folder.noteEntry ? '<span class="folder-note-dot" title="Folder note"></span>' : ""}
