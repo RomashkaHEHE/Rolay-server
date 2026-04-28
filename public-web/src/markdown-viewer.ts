@@ -1011,7 +1011,10 @@ function renderRemotePresence(
     chip.setAttribute("aria-label", anonymousViewerLabel(anonymousViewerCount));
     chip.title = anonymousViewerLabel(anonymousViewerCount);
     chip.innerHTML = `
-      <span class="presence-eye" aria-hidden="true"></span>
+      <svg class="presence-eye" viewBox="0 0 24 16" aria-hidden="true" focusable="false">
+        <path d="M1.75 8s3.75-5.25 10.25-5.25S22.25 8 22.25 8 18.5 13.25 12 13.25 1.75 8 1.75 8Z"></path>
+        <circle cx="12" cy="8" r="2.6"></circle>
+      </svg>
       <span class="presence-count">${anonymousViewerCount}</span>
     `;
     presence.append(chip);

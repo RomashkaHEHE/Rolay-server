@@ -391,24 +391,22 @@ h1 {
 }
 
 .presence-eye {
-  position: relative;
-  width: 15px;
-  height: 10px;
-  border: 1.7px solid currentColor;
-  border-radius: 999px 999px 999px 999px / 78% 78% 78% 78%;
-  transform: rotate(-3deg);
+  width: 18px;
+  height: 13px;
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
-.presence-eye::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: currentColor;
-  transform: translate(-50%, -50%);
+.presence-eye path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.presence-eye circle {
+  fill: currentColor;
 }
 
 .presence-count {
