@@ -550,7 +550,11 @@ h1 {
 }
 
 .markdown-preview p {
-  margin: 0 0 1em;
+  margin: 0;
+}
+
+.markdown-blank-lines {
+  height: calc(var(--blank-lines, 1) * 1.72em);
 }
 
 .markdown-preview h1,

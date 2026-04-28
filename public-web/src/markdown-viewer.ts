@@ -253,7 +253,16 @@ function renderBlocks(
   while (index < lines.length) {
     const line = lines[index] ?? "";
     if (line.trim() === "") {
-      index++;
+      const blankStart = index;
+      while (index < lines.length && (lines[index] ?? "").trim() === "") {
+        index++;
+      }
+      const blank = document.createElement("div");
+      blank.className = "markdown-blank-lines";
+      blank.style.setProperty("--blank-lines", String(index - blankStart));
+      blank.setAttribute("aria-hidden", "true");
+      tagSource(blank, source, blankStart, index, "blank");
+      target.appendChild(blank);
       continue;
     }
 
@@ -1106,7 +1115,7 @@ function selectionRectsAtSourceRange(
       return [];
     }
 
-    if (block.dataset.sourceKind === "math") {
+    if (block.dataset.sourceKind === "math" || block.dataset.sourceKind === "blank") {
       const rect = selectionRectInMathBlock(article, block, blockStart, blockEnd, rangeStart, rangeEnd);
       return rect ? [rect] : [];
     }
@@ -1190,7 +1199,7 @@ function caretRectAtSourceOffset(
   const sourceEnd = Math.max(sourceStart, Number(block.dataset.sourceEnd ?? sourceStart));
   const clampedOffset = Math.max(sourceStart, Math.min(sourceOffset, sourceEnd));
 
-  if (block.dataset.sourceKind === "math") {
+  if (block.dataset.sourceKind === "math" || block.dataset.sourceKind === "blank") {
     return caretRectInBlockBySourceRatio(article, block, sourceStart, sourceEnd, clampedOffset);
   }
 
