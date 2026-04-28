@@ -115,6 +115,12 @@ select {
   appearance: none;
   width: 100%;
   color: var(--text);
+  font-family: "Aptos", "Segoe UI Variable", "Trebuchet MS", sans-serif;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+  text-transform: none;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015)),
     var(--panel-strong);
@@ -122,6 +128,12 @@ select {
   border-radius: var(--radius-xs);
   padding: 11px 34px 11px 12px;
   outline: none;
+}
+
+.room-picker option {
+  background: #171821;
+  color: var(--text);
+  font: inherit;
 }
 
 .room-picker::after {
