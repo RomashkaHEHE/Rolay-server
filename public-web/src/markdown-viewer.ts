@@ -74,6 +74,19 @@ interface SourceMap {
   lineLengths: number[];
 }
 
+interface ListItem {
+  lines: string[];
+  source?: SourceMap;
+}
+
+interface ListResult {
+  ordered: boolean;
+  markerStyle: "bullet" | "dot" | "paren";
+  start: number;
+  items: ListItem[];
+  nextIndex: number;
+}
+
 export async function openMarkdownViewer(params: {
   entry: PublicEntry;
   manifest: PublicManifest;
@@ -328,9 +341,9 @@ function renderBlocks(
       continue;
     }
 
-    const list = readList(lines, index);
+    const list = readList(lines, index, source);
     if (list) {
-      const element = renderList(list.ordered, list.items, context);
+      const element = renderList(list, context);
       tagSource(element, source, index, list.nextIndex, "list");
       target.appendChild(element);
       index = list.nextIndex;
@@ -506,37 +519,135 @@ function renderCallout(
 
 function readList(
   lines: string[],
-  index: number
-): { ordered: boolean; items: string[]; nextIndex: number } | null {
-  const first = lines[index] ?? "";
-  const ordered = /^\s*\d+[.)]\s+/.test(first);
-  const unordered = /^\s*[-+*]\s+/.test(first);
-  if (!ordered && !unordered) {
+  index: number,
+  source?: SourceMap
+): ListResult | null {
+  const first = parseListMarker(lines[index] ?? "");
+  if (!first) {
     return null;
   }
 
-  const items: string[] = [];
+  const items: ListItem[] = [];
   let cursor = index;
-  const pattern = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-+*]\s+/;
-  while (cursor < lines.length && pattern.test(lines[cursor] ?? "")) {
-    items.push((lines[cursor] ?? "").replace(pattern, ""));
+  while (cursor < lines.length) {
+    const marker = parseListMarker(lines[cursor] ?? "");
+    if (
+      !marker ||
+      marker.ordered !== first.ordered ||
+      marker.markerStyle !== first.markerStyle
+    ) {
+      break;
+    }
+
+    const itemLines = [marker.content];
+    const itemOffsets =
+      source ? [(source.lineOffsets[cursor] ?? 0) + marker.contentStart] : [];
+    const itemLengths = [marker.content.length];
     cursor++;
+
+    while (itemHasOpenDisplayMath(itemLines) && cursor < lines.length) {
+      const continuation = lines[cursor] ?? "";
+      itemLines.push(continuation);
+      if (source) {
+        itemOffsets.push(source.lineOffsets[cursor] ?? 0);
+      }
+      itemLengths.push(continuation.length);
+      cursor++;
+    }
+
+    items.push({
+      lines: itemLines,
+      ...(itemOffsets.length > 0
+        ? { source: { lineOffsets: itemOffsets, lineLengths: itemLengths } }
+        : {})
+    });
   }
+
   return {
-    ordered,
+    ordered: first.ordered,
+    markerStyle: first.markerStyle,
+    start: first.number ?? 1,
     items,
     nextIndex: cursor
   };
 }
 
-function renderList(ordered: boolean, items: string[], context: RenderContext): HTMLElement {
-  const list = document.createElement(ordered ? "ol" : "ul");
-  for (const item of items) {
+function renderList(result: ListResult, context: RenderContext): HTMLElement {
+  const list = document.createElement(result.ordered ? "ol" : "ul");
+  if (result.ordered && result.start !== 1) {
+    list.setAttribute("start", String(result.start));
+  }
+  if (result.markerStyle === "paren") {
+    list.classList.add("ordered-paren");
+    list.style.setProperty("--list-start", String(result.start - 1));
+  }
+
+  for (const item of result.items) {
     const li = document.createElement("li");
-    li.innerHTML = renderInline(item, context);
+    tagListItemSource(li, item);
+    if (item.lines.length === 1 && !startsBlock(item.lines, 0)) {
+      li.innerHTML = renderInline(item.lines[0] ?? "", context);
+    } else {
+      renderBlocks(item.lines, context, li, item.source);
+    }
     list.append(li);
   }
   return list;
+}
+
+function parseListMarker(line: string): {
+  ordered: boolean;
+  markerStyle: "bullet" | "dot" | "paren";
+  number?: number;
+  content: string;
+  contentStart: number;
+} | null {
+  const ordered = line.match(/^(\s*)(\d+)([.)])\s+([\s\S]*)$/);
+  if (ordered) {
+    return {
+      ordered: true,
+      markerStyle: ordered[3] === ")" ? "paren" : "dot",
+      number: Number(ordered[2]),
+      content: ordered[4] ?? "",
+      contentStart: ordered[0].length - (ordered[4]?.length ?? 0)
+    };
+  }
+
+  const unordered = line.match(/^(\s*)[-+*]\s+([\s\S]*)$/);
+  if (!unordered) {
+    return null;
+  }
+
+  return {
+    ordered: false,
+    markerStyle: "bullet",
+    content: unordered[2] ?? "",
+    contentStart: unordered[0].length - (unordered[2]?.length ?? 0)
+  };
+}
+
+function itemHasOpenDisplayMath(lines: string[]): boolean {
+  const first = lines[0]?.trim() ?? "";
+  if (!first.startsWith("$$") && !first.startsWith("\\[")) {
+    return false;
+  }
+
+  return !readDisplayMath(lines, 0);
+}
+
+function tagListItemSource(element: HTMLElement, item: ListItem): void {
+  if (!item.source) {
+    return;
+  }
+
+  const sourceStart = item.source.lineOffsets[0];
+  if (sourceStart === undefined) {
+    return;
+  }
+
+  element.dataset.sourceStart = String(sourceStart);
+  element.dataset.sourceEnd = String(sourceEndForLine(item.source, item.lines.length));
+  element.dataset.sourceKind = "list-item";
 }
 
 function readTable(

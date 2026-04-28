@@ -92,6 +92,8 @@ If you start another substantial feature, create a new task file before leaving 
 - Fixed public web remote cursor and selection positioning to map awareness source offsets through
   Markdown block source ranges, including hidden heading/list/callout syntax and multi-line display
   math fences.
+- Improved public Markdown list rendering so ordered lists preserve both `1.` and `1)` marker
+  styles and display-math blocks can live inside list items.
 
 ## Where To Look First
 

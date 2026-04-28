@@ -464,6 +464,24 @@ h1 {
   color: var(--accent);
 }
 
+.markdown-preview ol.ordered-paren {
+  list-style: none;
+  counter-reset: rolay-ordered-paren var(--list-start);
+}
+
+.markdown-preview ol.ordered-paren > li {
+  position: relative;
+  counter-increment: rolay-ordered-paren;
+}
+
+.markdown-preview ol.ordered-paren > li::before {
+  content: counter(rolay-ordered-paren) ")";
+  position: absolute;
+  right: calc(100% + 0.45em);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
 .markdown-preview blockquote {
   margin: 16px 0;
   padding: 5px 0 5px 17px;
