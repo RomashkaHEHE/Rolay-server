@@ -9,9 +9,9 @@
   --text: #eee7d8;
   --muted: #aaa193;
   --faint: #756e66;
-  --accent: #c9874b;
-  --accent-soft: rgba(201, 135, 75, 0.14);
-  --accent-cool: #9ab5d6;
+  --accent: #d19358;
+  --accent-soft: rgba(209, 147, 88, 0.14);
+  --accent-cool: #91abc9;
   --paper: #f6f0e4;
   --paper-ink: #17181d;
   --shadow: 0 22px 70px rgba(0, 0, 0, 0.34);
@@ -42,7 +42,7 @@ body {
     radial-gradient(circle at 86% 16%, rgba(201, 135, 75, 0.12), transparent 34%),
     linear-gradient(145deg, #0d0d12 0%, #171821 48%, #0b0c11 100%);
   background-size: 56px 56px, 56px 56px, auto, auto, auto;
-  font-family: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-family: "Trebuchet MS", "Aptos", "Segoe UI Variable", sans-serif;
 }
 
 button,
@@ -87,10 +87,10 @@ select {
 
 .brand strong {
   display: block;
-  font-family: "Bahnschrift", "Aptos Display", "Segoe UI Variable", sans-serif;
-  font-size: 25px;
+  font-family: "Trebuchet MS", "Aptos Display", "Segoe UI Variable", sans-serif;
+  font-size: 24px;
   font-weight: 700;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.02em;
   line-height: 1;
 }
 
@@ -111,12 +111,17 @@ select {
 }
 
 .room-picker select {
+  appearance: none;
   width: 100%;
   color: var(--text);
-  background: var(--panel-strong);
+  background:
+    linear-gradient(45deg, transparent 50%, var(--accent) 50%) calc(100% - 17px) 50% / 6px 6px no-repeat,
+    linear-gradient(135deg, var(--accent) 50%, transparent 50%) calc(100% - 12px) 50% / 6px 6px no-repeat,
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015)),
+    var(--panel-strong);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  padding: 11px 12px;
+  border-radius: var(--radius-xs);
+  padding: 11px 34px 11px 12px;
   outline: none;
 }
 
@@ -144,6 +149,10 @@ select {
   text-align: left;
 }
 
+.entry button {
+  font: inherit;
+}
+
 .entry:hover {
   color: var(--text);
   background: rgba(255, 255, 255, 0.045);
@@ -162,10 +171,51 @@ select {
 }
 
 .folder-caret {
-  width: 12px;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
   color: var(--accent);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
+  border-radius: 3px;
+}
+
+.folder-entry:hover .folder-caret {
+  background: rgba(209, 147, 88, 0.1);
+}
+
+.folder-glyph,
+.file-glyph {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(154, 181, 214, 0.45);
+  border-radius: 2px;
+}
+
+.folder-glyph {
+  width: 12px;
+  border-color: rgba(209, 147, 88, 0.5);
+  background: rgba(209, 147, 88, 0.16);
+}
+
+.file-glyph {
+  background: rgba(154, 181, 214, 0.12);
+}
+
+.file-glyph-drawing {
+  border-color: rgba(209, 147, 88, 0.5);
+  background: rgba(209, 147, 88, 0.12);
+}
+
+.folder-note-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.75;
 }
 
 .entry-kind {
@@ -181,6 +231,17 @@ select {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.entry-viewers {
+  margin-left: auto;
+  min-width: 20px;
+  border: 1px solid rgba(209, 147, 88, 0.38);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: #f0c494;
+  font-size: 11px;
+  text-align: center;
 }
 
 .reader {
@@ -201,22 +262,21 @@ select {
 .eyebrow {
   max-width: 72vw;
   margin: 0 0 8px;
-  color: var(--accent);
-  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
-  font-size: 11px;
+  color: #b9ad9d;
+  font-family: "Trebuchet MS", "Aptos", sans-serif;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
 h1 {
   margin: 0;
-  font-family: "Bahnschrift", "Aptos Display", "Segoe UI Variable", sans-serif;
-  font-size: clamp(30px, 3.7vw, 58px);
-  font-weight: 750;
-  letter-spacing: -0.055em;
-  line-height: 0.98;
+  font-family: "Trebuchet MS", "Aptos Display", "Segoe UI Variable", sans-serif;
+  font-size: clamp(28px, 3vw, 44px);
+  font-weight: 760;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
 }
 
 .presence {
@@ -234,6 +294,11 @@ h1 {
   background: rgba(255, 255, 255, 0.045);
   color: var(--text);
   font-size: 12px;
+}
+
+.anonymous-viewers {
+  border-color: rgba(209, 147, 88, 0.58) !important;
+  color: #f0c494;
 }
 
 .presence-chip.has-selection {
@@ -286,6 +351,7 @@ h1 {
 }
 
 .markdown-preview {
+  position: relative;
   max-width: 920px;
   padding: 30px;
   color: var(--text);
@@ -313,7 +379,7 @@ h1 {
 .markdown-preview h6 {
   margin: 1.45em 0 0.55em;
   color: #f4eddf;
-  font-family: "Bahnschrift", "Aptos Display", "Segoe UI Variable", sans-serif;
+  font-family: "Trebuchet MS", "Aptos Display", "Segoe UI Variable", sans-serif;
   font-weight: 760;
   letter-spacing: -0.025em;
   line-height: 1.18;
@@ -437,10 +503,10 @@ h1 {
 
 .callout {
   margin: 16px 0;
-  border: 1px solid rgba(154, 181, 214, 0.24);
-  border-left: 3px solid var(--accent-cool);
+  border: 1px solid rgba(154, 181, 214, 0.22);
+  border-left: 4px solid var(--accent-cool);
   border-radius: var(--radius-sm);
-  background: rgba(154, 181, 214, 0.08);
+  background: rgba(154, 181, 214, 0.075);
 }
 
 .callout-title {
@@ -474,26 +540,44 @@ h1 {
 
 .callout-warning,
 .callout-danger,
-.callout-important {
+.callout-important,
+.callout-failure,
+.callout-bug {
   border-left-color: #df9d62;
   background: rgba(223, 157, 98, 0.09);
 }
 
 .callout-warning .callout-title,
 .callout-danger .callout-title,
-.callout-important .callout-title {
+.callout-important .callout-title,
+.callout-failure .callout-title,
+.callout-bug .callout-title {
   color: #f2d0ad;
 }
 
 .callout-success,
-.callout-tip {
+.callout-tip,
+.callout-todo {
   border-left-color: #8cc7a2;
   background: rgba(140, 199, 162, 0.08);
 }
 
 .callout-success .callout-title,
-.callout-tip .callout-title {
+.callout-tip .callout-title,
+.callout-todo .callout-title {
   color: #d1f0dc;
+}
+
+.callout-question,
+.callout-example {
+  border-left-color: #caa6f7;
+  background: rgba(202, 166, 247, 0.08);
+}
+
+.callout-quote,
+.callout-abstract {
+  border-left-color: #aaa193;
+  background: rgba(170, 161, 147, 0.08);
 }
 
 .math-inline {
@@ -539,6 +623,58 @@ h1 {
   color: var(--muted);
   font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
   font-size: 11px;
+}
+
+.note-embed {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.note-embed-title {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.note-embed-body {
+  min-height: 90px;
+}
+
+.note-embed-drawing .drawing-svg,
+.note-embed-drawing .drawing-canvas {
+  max-height: 560px;
+}
+
+.remote-cursor-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.remote-caret {
+  position: absolute;
+  width: 2px;
+  min-height: 1.15em;
+  border-radius: 1px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.16);
+}
+
+.remote-caret-label {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  margin-bottom: 2px;
+  border-radius: 3px;
+  padding: 2px 5px;
+  color: #101116;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .document-drawing {

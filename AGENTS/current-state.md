@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: `2026-04-27`
+Last updated: `2026-04-28`
 
 ## Baseline
 
@@ -36,6 +36,8 @@ Current core stack:
 - Public web visitors must never get write-capable CRDT access or appear as collaborators.
 - Public web viewers may observe authenticated member awareness for cursors, but inbound public
   awareness is filtered before it can become shared presence.
+- Public web viewers are counted only as anonymous per-note counts; they must not be mixed into
+  authenticated note-presence `viewers`.
 - Room tree SSE, settings SSE, note presence SSE, and note read-state SSE are separate systems with
   different purposes.
 - Backward compatibility matters: do not turn previously optional client data into required runtime
@@ -83,6 +85,10 @@ If you start another substantial feature, create a new task file before leaving 
 - Switched the public Markdown web viewer from source-style CodeMirror rendering to preview-style
   HTML rendering with folders in the sidebar, KaTeX, callouts, common inline formatting, embedded
   images, and Obsidian Excalidraw plugin notes marked with `excalidraw-plugin: parsed`.
+- Added public anonymous note-viewer counts and bridged them into authenticated note-presence as
+  optional `anonymousViewerCount`.
+- Improved the public web sidebar for Folder Notes, persisted expanded folders in cookies, fixed
+  single-newline Markdown rendering, and added lazy embedded Excalidraw rendering from note embeds.
 
 ## Where To Look First
 
@@ -97,6 +103,7 @@ For public read-only website behavior:
 - [src/modules/public-api/public-api.routes.ts](../src/modules/public-api/public-api.routes.ts)
 - [src/modules/root/root.routes.ts](../src/modules/root/root.routes.ts)
 - [src/services/public-access-service.ts](../src/services/public-access-service.ts)
+- [src/services/public-viewer-presence-service.ts](../src/services/public-viewer-presence-service.ts)
 - [public-web/src/main.ts](../public-web/src/main.ts)
 
 For Markdown realtime, note presence, or note read-state:
@@ -127,6 +134,8 @@ For canonical protocol details:
   lets public viewers see member cursors without becoming collaborators themselves.
 - Public manifests intentionally do not list image files as tree entries; images are exposed only
   through the `assets` map for Markdown embeds.
+- Public anonymous viewer counts are ephemeral and live-only. They are exposed through public SSE as
+  `public.note-viewers.*` and through authenticated note presence as optional `anonymousViewerCount`.
 - Some published drawings may be stored as `kind="markdown"` when they predate first-class
   Excalidraw entries. The public web viewer detects `excalidraw-plugin: parsed` frontmatter and
   renders those Markdown-backed drawings client-side.

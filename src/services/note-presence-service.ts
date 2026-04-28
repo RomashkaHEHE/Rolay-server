@@ -7,6 +7,7 @@ import {
   User
 } from "../domain/types";
 import { MemoryState } from "./memory-state";
+import { PublicViewerPresenceService } from "./public-viewer-presence-service";
 
 interface RealtimePresenceContext {
   workspaceId: string;
@@ -51,7 +52,10 @@ export class NotePresenceService {
   private readonly workspaceListeners = new Map<string, Set<NotePresenceListener>>();
   private readonly workspaceNotes = new Map<string, Map<string, NotePresenceViewer[]>>();
 
-  constructor(private readonly state: MemoryState) {}
+  constructor(
+    private readonly state: MemoryState,
+    private readonly publicViewers?: PublicViewerPresenceService
+  ) {}
 
   openStream(actor: User, workspaceId: string, listener: NotePresenceListener): NotePresenceStreamHandle {
     this.assertWorkspaceMember(actor, workspaceId);
@@ -63,11 +67,25 @@ export class NotePresenceService {
     }
 
     listeners.add(listener);
+    const publicStream = this.publicViewers?.openStream(workspaceId, (event) => {
+      listener({
+        type: "note.presence.updated",
+        payload: {
+          workspaceId: event.payload.workspaceId,
+          entryId: event.payload.entryId,
+          viewers: cloneValue(
+            this.workspaceNotes.get(workspaceId)?.get(event.payload.entryId) ?? []
+          ),
+          anonymousViewerCount: event.payload.anonymousViewerCount
+        }
+      });
+    });
 
     return {
       snapshot: this.getSnapshot(workspaceId),
       unsubscribe: () => {
         listeners?.delete(listener);
+        publicStream?.unsubscribe();
         this.pruneWorkspace(workspaceId);
       }
     };
@@ -128,8 +146,24 @@ export class NotePresenceService {
       })
       .map(([entryId, viewers]) => ({
         entryId,
-        viewers: cloneValue(viewers)
+        viewers: cloneValue(viewers),
+        ...this.publicViewerCountField(workspaceId, entryId)
       }));
+
+    for (const publicNote of this.publicViewers?.getSnapshot(workspaceId).notes ?? []) {
+      if (
+        notes.some((note) => note.entryId === publicNote.entryId) ||
+        !this.isActiveMarkdownEntry(workspaceId, publicNote.entryId)
+      ) {
+        continue;
+      }
+
+      notes.push({
+        entryId: publicNote.entryId,
+        viewers: [],
+        anonymousViewerCount: publicNote.anonymousViewerCount
+      });
+    }
 
     return {
       workspaceId,
@@ -252,7 +286,8 @@ export class NotePresenceService {
     const payload: NotePresenceUpdate = {
       workspaceId,
       entryId,
-      viewers: cloneValue(viewers)
+      viewers: cloneValue(viewers),
+      ...this.publicViewerCountField(workspaceId, entryId)
     };
 
     for (const listener of listeners) {
@@ -269,6 +304,14 @@ export class NotePresenceService {
     }
 
     return JSON.stringify(left) === JSON.stringify(right);
+  }
+
+  private publicViewerCountField(
+    workspaceId: string,
+    entryId: string
+  ): { anonymousViewerCount?: number } {
+    const count = this.publicViewers?.getCount(workspaceId, entryId) ?? 0;
+    return count > 0 ? { anonymousViewerCount: count } : {};
   }
 
   private pruneWorkspace(workspaceId: string): void {

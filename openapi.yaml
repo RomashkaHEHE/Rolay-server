@@ -587,6 +587,12 @@ paths:
               schema:
                 type: string
                 example: |
+                  event: public.note-viewers.snapshot
+                  data: {"workspaceId":"ws_1","notes":[{"entryId":"fil_1","anonymousViewerCount":2}]}
+
+                  event: public.note-viewers.updated
+                  data: {"workspaceId":"ws_1","entryId":"fil_1","anonymousViewerCount":3}
+
                   id: 42
                   event: tree.entry.updated
                   data: {"entryId":"fil_1","path":"Week-01.md","entryVersion":3}
@@ -1849,6 +1855,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/NotePresenceViewer'
+        anonymousViewerCount:
+          type: integer
+          minimum: 0
+          description: Optional count of anonymous public web viewers currently connected to this note.
     NotePresenceSnapshot:
       type: object
       additionalProperties: false
@@ -1873,6 +1883,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/NotePresenceViewer'
+        anonymousViewerCount:
+          type: integer
+          minimum: 0
+          description: Optional count of anonymous public web viewers currently connected to this note.
     NoteReadStateNote:
       type: object
       additionalProperties: false
@@ -2099,6 +2113,39 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/PublicAsset'
+    PublicViewerPresenceNote:
+      type: object
+      additionalProperties: false
+      required: [entryId, anonymousViewerCount]
+      properties:
+        entryId:
+          type: string
+        anonymousViewerCount:
+          type: integer
+          minimum: 0
+    PublicViewerPresenceSnapshot:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, notes]
+      properties:
+        workspaceId:
+          type: string
+        notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicViewerPresenceNote'
+    PublicViewerPresenceUpdate:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, entryId, anonymousViewerCount]
+      properties:
+        workspaceId:
+          type: string
+        entryId:
+          type: string
+        anonymousViewerCount:
+          type: integer
+          minimum: 0
     PublicCrdtTokenResponse:
       allOf:
         - $ref: '#/components/schemas/CrdtTokenResponse'

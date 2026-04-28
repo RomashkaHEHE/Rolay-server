@@ -51,6 +51,7 @@ interface PublicCrdtToken {
 
 export interface MarkdownViewer {
   updateAssets(assets: Record<string, PublicAsset>): void;
+  updateAnonymousViewerCount(count: number): void;
   destroy(): void;
 }
 
@@ -58,9 +59,13 @@ interface RemoteViewer {
   label: string;
   color: string;
   hasSelection: boolean;
+  selection: { anchor: number; head: number } | null;
 }
 
 interface RenderContext {
+  workspaceId: string;
+  currentEntryPath: string;
+  entries: PublicEntry[];
   assets: Record<string, PublicAsset>;
 }
 
@@ -69,6 +74,7 @@ export async function openMarkdownViewer(params: {
   manifest: PublicManifest;
   editorHost: HTMLElement;
   presence: HTMLElement;
+  getAnonymousViewerCount?: () => number;
 }): Promise<MarkdownViewer> {
   params.editorHost.innerHTML = `<article class="markdown-preview" aria-live="polite"></article>`;
   params.presence.innerHTML = "";
@@ -76,9 +82,11 @@ export async function openMarkdownViewer(params: {
   const document = new Y.Doc();
   const text = document.getText("content");
   let assets = params.manifest.assets;
+  let anonymousViewerCount = params.getAnonymousViewerCount?.() ?? 0;
   let destroyed = false;
   let renderToken = 0;
   let renderQueued = false;
+  let remoteViewers: RemoteViewer[] = [];
 
   const render = async () => {
     if (destroyed) {
@@ -106,7 +114,15 @@ export async function openMarkdownViewer(params: {
       params.editorHost.innerHTML = `<article class="markdown-preview" aria-live="polite"></article>`;
       article = params.editorHost.querySelector<HTMLElement>(".markdown-preview")!;
     }
-    article.replaceChildren(renderMarkdown(raw, { assets }));
+    const context = {
+      workspaceId: params.manifest.workspace.id,
+      currentEntryPath: params.entry.path,
+      entries: params.manifest.entries,
+      assets
+    };
+    article.replaceChildren(renderMarkdown(raw, context));
+    await hydrateEmbeds(article, context);
+    renderRemoteCursors(article, remoteViewers);
   };
 
   const queueRender = () => {
@@ -134,7 +150,8 @@ export async function openMarkdownViewer(params: {
     onSynced: ({ state }) => {
       if (state) {
         queueRender();
-        renderRemotePresence(provider, params.presence);
+        remoteViewers = readRemoteViewers(provider);
+        renderRemotePresence(remoteViewers, params.presence, anonymousViewerCount);
       }
     }
   });
@@ -149,7 +166,9 @@ export async function openMarkdownViewer(params: {
   text.observe(textObserver);
 
   const presenceObserver = () => {
-    renderRemotePresence(provider, params.presence);
+    remoteViewers = readRemoteViewers(provider);
+    renderRemotePresence(remoteViewers, params.presence, anonymousViewerCount);
+    queueRender();
   };
   provider.awareness?.on("change", presenceObserver);
   provider.awareness?.on("update", presenceObserver);
@@ -162,6 +181,10 @@ export async function openMarkdownViewer(params: {
     updateAssets(nextAssets) {
       assets = nextAssets;
       queueRender();
+    },
+    updateAnonymousViewerCount(count) {
+      anonymousViewerCount = count;
+      renderRemotePresence(remoteViewers, params.presence, anonymousViewerCount);
     },
     destroy() {
       destroyed = true;
@@ -293,7 +316,7 @@ function renderBlocks(
       index++;
     }
     const p = document.createElement("p");
-    p.innerHTML = renderInline(paragraph.join(" "), context);
+    p.innerHTML = renderInline(paragraph.join("\n"), context);
     target.appendChild(p);
   }
 }
@@ -356,9 +379,9 @@ function readDisplayMath(
 function readCallout(
   lines: string[],
   index: number
-): { type: string; title: string; body: string[]; nextIndex: number } | null {
+): { type: string; title: string; body: string[]; fold: "+" | "-" | null; nextIndex: number } | null {
   const first = lines[index] ?? "";
-  const match = first.match(/^>\s*\[!([A-Za-z0-9_-]+)](?:[+-])?\s*(.*)$/);
+  const match = first.match(/^>\s*\[!([A-Za-z0-9_-]+)]([+-])?\s*(.*)$/);
   if (!match) {
     return null;
   }
@@ -372,7 +395,8 @@ function readCallout(
 
   return {
     type: match[1]!.toLowerCase(),
-    title: match[2]?.trim() || calloutTitle(match[1]!),
+    fold: match[2] === "+" || match[2] === "-" ? match[2] : null,
+    title: match[3]?.trim() || calloutTitle(match[1]!),
     body,
     nextIndex: cursor
   };
@@ -384,8 +408,10 @@ function renderCallout(
   body: string[],
   context: RenderContext
 ): HTMLElement {
+  const canonicalType = calloutCanonicalType(type);
   const callout = document.createElement("aside");
-  callout.className = `callout callout-${safeClassName(type)}`;
+  callout.className = `callout callout-${safeClassName(canonicalType)}`;
+  callout.dataset.callout = canonicalType;
 
   const heading = document.createElement("div");
   heading.className = "callout-title";
@@ -502,9 +528,13 @@ function renderInline(raw: string, context: RenderContext): string {
   let value = raw;
 
   value = value.replace(/!\[\[([^\]]+)]]|!\[([^\]]*)]\(([^)]+)\)/g, (match, wikiTarget, alt, mdTarget) => {
-    const target = String(wikiTarget ?? mdTarget ?? "").trim();
-    const asset = resolveAsset(context.assets, target);
+    const target = splitEmbedTarget(String(wikiTarget ?? mdTarget ?? "").trim()).target;
+    const asset = resolveAsset(context.assets, target, context.currentEntryPath);
     if (!asset) {
+      const entry = resolveEntry(context.entries, target, context.currentEntryPath);
+      if (entry?.kind === "excalidraw" || entry?.kind === "markdown") {
+        return reserve(renderEntryEmbedPlaceholder(entry, target));
+      }
       return match;
     }
     const caption = String(alt ?? asset.path);
@@ -550,6 +580,7 @@ function renderInline(raw: string, context: RenderContext): string {
   });
   html = html.replace(/&lt;br\s*\/?&gt;/gi, "<br>");
   html = html.replace(/&lt;(sub|sup)&gt;([\s\S]*?)&lt;\/\1&gt;/gi, "<$1>$2</$1>");
+  html = html.replace(/\n/g, "<br>\n");
 
   for (const [index, replacement] of placeholders.entries()) {
     html = html.replaceAll(`\u0000${index}\u0000`, replacement);
@@ -565,6 +596,114 @@ function renderImage(asset: PublicAsset, caption: string): string {
     `<figcaption>${escapeHtml(asset.path)}</figcaption>`,
     `</figure>`
   ].join("");
+}
+
+function renderEntryEmbedPlaceholder(entry: PublicEntry, target: string): string {
+  return [
+    `<figure class="note-embed note-embed-loading" data-entry-id="${escapeAttribute(entry.id)}">`,
+    `<div class="note-embed-title">${escapeHtml(filename(entry.path))}</div>`,
+    `<div class="note-embed-body">Loading ${escapeHtml(target)}...</div>`,
+    `</figure>`
+  ].join("");
+}
+
+async function hydrateEmbeds(article: HTMLElement, context: RenderContext): Promise<void> {
+  const embeds = [...article.querySelectorAll<HTMLElement>(".note-embed[data-entry-id]")];
+  await Promise.all(
+    embeds.map(async (embed) => {
+      const entryId = embed.dataset.entryId;
+      const entry = context.entries.find((candidate) => candidate.id === entryId);
+      if (!entry) {
+        return;
+      }
+
+      try {
+        const raw =
+          entry.kind === "excalidraw" && entry.blob
+            ? await fetchBlobText(context.workspaceId, entry)
+            : await fetchMarkdownText(context.workspaceId, entry);
+
+        if (!isObsidianExcalidraw(raw)) {
+          embed.classList.remove("note-embed-loading");
+          embed.classList.add("note-embed-unavailable");
+          embed.querySelector(".note-embed-body")!.textContent =
+            "Embedded markdown preview is not supported yet.";
+          return;
+        }
+
+        embed.classList.remove("note-embed-loading");
+        embed.classList.add("note-embed-drawing");
+        const body = embed.querySelector<HTMLElement>(".note-embed-body")!;
+        const { renderDrawing } = await import("./drawing-viewer");
+        await renderDrawing(raw, body);
+      } catch (error) {
+        embed.classList.remove("note-embed-loading");
+        embed.classList.add("note-embed-error");
+        embed.querySelector(".note-embed-body")!.textContent =
+          error instanceof Error ? error.message : "Could not load embedded drawing.";
+      }
+    })
+  );
+}
+
+async function fetchBlobText(workspaceId: string, entry: PublicEntry): Promise<string> {
+  if (!entry.blob) {
+    throw new Error("Embedded drawing has no published blob.");
+  }
+
+  const response = await fetch(
+    `/public/api/rooms/${encodeURIComponent(workspaceId)}` +
+      `/files/${encodeURIComponent(entry.id)}/blob/content` +
+      `?hash=${encodeURIComponent(entry.blob.hash)}`
+  );
+  if (!response.ok) {
+    throw new Error(`Could not load embedded drawing: ${response.status}`);
+  }
+  return response.text();
+}
+
+async function fetchMarkdownText(workspaceId: string, entry: PublicEntry): Promise<string> {
+  if (!entry.docId) {
+    throw new Error("Embedded markdown note has no CRDT document.");
+  }
+
+  const token = await fetchJson<PublicCrdtToken>(
+    `/public/api/rooms/${encodeURIComponent(workspaceId)}` +
+      `/markdown/${encodeURIComponent(entry.id)}/crdt-token`,
+    {
+      method: "POST"
+    }
+  );
+  const ydoc = new Y.Doc();
+  const text = ydoc.getText("content");
+
+  return new Promise<string>((resolve, reject) => {
+    let provider: HocuspocusProvider | null = null;
+    const timeout = window.setTimeout(() => {
+      provider?.destroy();
+      ydoc.destroy();
+      reject(new Error("Timed out loading embedded drawing."));
+    }, 5000);
+
+    provider = new HocuspocusProvider({
+      url: token.wsUrl,
+      name: token.docId,
+      document: ydoc,
+      token: token.token,
+      onSynced: ({ state }) => {
+        if (!state) {
+          return;
+        }
+        window.clearTimeout(timeout);
+        const value = text.toString();
+        provider?.awareness?.setLocalState(null);
+        provider?.destroy();
+        ydoc.destroy();
+        resolve(value);
+      }
+    });
+    provider.awareness?.setLocalState(null);
+  });
 }
 
 function renderKatexHtml(expression: string, displayMode: boolean): string {
@@ -593,11 +732,10 @@ function renderKatex(expression: string, displayMode: boolean, target: HTMLEleme
   }
 }
 
-function renderRemotePresence(provider: HocuspocusProvider, presence: HTMLElement): void {
+function readRemoteViewers(provider: HocuspocusProvider): RemoteViewer[] {
   const awareness = provider.awareness;
   if (!awareness) {
-    presence.innerHTML = "";
-    return;
+    return [];
   }
 
   const viewers: RemoteViewer[] = [];
@@ -608,13 +746,33 @@ function renderRemotePresence(provider: HocuspocusProvider, presence: HTMLElemen
       continue;
     }
 
+    const selection = extractSelection(record);
     viewers.push({
       ...user,
-      hasSelection: Boolean(extractSelection(record))
+      hasSelection: Boolean(selection),
+      selection
     });
   }
 
+  return viewers;
+}
+
+function renderRemotePresence(
+  viewers: RemoteViewer[],
+  presence: HTMLElement,
+  anonymousViewerCount: number
+): void {
   presence.innerHTML = "";
+  if (anonymousViewerCount > 0) {
+    const chip = document.createElement("span");
+    chip.className = "presence-chip anonymous-viewers";
+    chip.textContent =
+      anonymousViewerCount === 1
+        ? "1 anonymous reader"
+        : `${anonymousViewerCount} anonymous readers`;
+    presence.append(chip);
+  }
+
   for (const viewer of viewers) {
     const chip = document.createElement("span");
     chip.className = `presence-chip ${viewer.hasSelection ? "has-selection" : ""}`;
@@ -622,6 +780,79 @@ function renderRemotePresence(provider: HocuspocusProvider, presence: HTMLElemen
     chip.textContent = viewer.label;
     presence.append(chip);
   }
+}
+
+function renderRemoteCursors(article: HTMLElement, viewers: RemoteViewer[]): void {
+  article.querySelector(".remote-cursor-layer")?.remove();
+  const selectedViewers = viewers.filter((viewer) => viewer.selection);
+  if (selectedViewers.length === 0) {
+    return;
+  }
+
+  const layer = document.createElement("div");
+  layer.className = "remote-cursor-layer";
+  article.append(layer);
+
+  for (const viewer of selectedViewers) {
+    const position = Math.max(0, viewer.selection!.head);
+    const rect = caretRectAtTextOffset(article, position);
+    if (!rect) {
+      continue;
+    }
+
+    const caret = document.createElement("span");
+    caret.className = "remote-caret";
+    caret.style.left = `${rect.left}px`;
+    caret.style.top = `${rect.top}px`;
+    caret.style.height = `${rect.height}px`;
+    caret.style.background = viewer.color;
+
+    const label = document.createElement("span");
+    label.className = "remote-caret-label";
+    label.style.background = viewer.color;
+    label.textContent = viewer.label;
+    caret.append(label);
+    layer.append(caret);
+  }
+}
+
+function caretRectAtTextOffset(root: HTMLElement, targetOffset: number): DOMRect | null {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.parentElement?.closest(".remote-cursor-layer")
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  let offset = 0;
+  let current = walker.nextNode();
+
+  while (current) {
+    const text = current.textContent ?? "";
+    const nextOffset = offset + text.length;
+    if (targetOffset <= nextOffset) {
+      const range = document.createRange();
+      range.setStart(current, Math.max(0, Math.min(text.length, targetOffset - offset)));
+      range.collapse(true);
+      const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+      range.detach();
+      if (!rect || rect.width === 0 && rect.height === 0) {
+        return null;
+      }
+      const rootRect = root.getBoundingClientRect();
+      return new DOMRect(
+        rect.left - rootRect.left,
+        rect.top - rootRect.top,
+        Math.max(2, rect.width),
+        Math.max(18, rect.height)
+      );
+    }
+
+    offset = nextOffset + 1;
+    current = walker.nextNode();
+  }
+
+  return null;
 }
 
 function extractUser(record: Record<string, unknown>): { label: string; color: string } | null {
@@ -681,14 +912,88 @@ function toSelection(value: unknown): { anchor: number; head: number } | null {
 
 function resolveAsset(
   assets: Record<string, PublicAsset>,
-  target: string
+  target: string,
+  currentEntryPath = ""
 ): PublicAsset | undefined {
-  const clean = safeDecode(target)
+  const clean = normalizeEmbedTarget(target);
+  const sameFolder = siblingPath(currentEntryPath, clean);
+  return (
+    assets[clean] ??
+    assets[`/${clean}`] ??
+    (sameFolder ? assets[sameFolder] : undefined) ??
+    assets[filename(clean)]
+  );
+}
+
+function resolveEntry(
+  entries: PublicEntry[],
+  target: string,
+  currentEntryPath = ""
+): PublicEntry | undefined {
+  const clean = normalizeEmbedTarget(target);
+  const cleanLower = clean.toLowerCase();
+  const cleanWithoutExtension = stripKnownExtension(cleanLower);
+  const sameFolder = siblingPath(currentEntryPath, clean)?.toLowerCase();
+
+  const scoreEntry = (entry: PublicEntry): number => {
+    const path = normalizePath(entry.path).toLowerCase();
+    const base = filename(path);
+    if (sameFolder && stripKnownExtension(path) === stripKnownExtension(sameFolder)) {
+      return 0;
+    }
+    if (path === cleanLower || `/${path}` === cleanLower) {
+      return 1;
+    }
+    if (base === cleanLower) {
+      return 2;
+    }
+    if (stripKnownExtension(path) === cleanWithoutExtension) {
+      return 3;
+    }
+    if (stripKnownExtension(base) === cleanWithoutExtension) {
+      return 4;
+    }
+    return Number.POSITIVE_INFINITY;
+  };
+
+  return entries
+    .map((entry) => ({ entry, score: scoreEntry(entry) }))
+    .filter(({ score }) => Number.isFinite(score))
+    .sort((left, right) => left.score - right.score || left.entry.path.localeCompare(right.entry.path))
+    .at(0)?.entry;
+}
+
+function splitEmbedTarget(value: string): { target: string; alias?: string } {
+  const [target, alias] = value.split("|", 2);
+  return {
+    target: target?.trim() ?? value.trim(),
+    ...(alias?.trim() ? { alias: alias.trim() } : {})
+  };
+}
+
+function normalizeEmbedTarget(target: string): string {
+  return safeDecode(splitEmbedTarget(target).target)
     .replace(/^<|>$/g, "")
     .replace(/^\/+/, "")
     .split("#")[0]!
     .trim();
-  return assets[clean] ?? assets[`/${clean}`] ?? assets[filename(clean)];
+}
+
+function stripKnownExtension(value: string): string {
+  return value
+    .replace(/\.excalidraw\.md$/i, "")
+    .replace(/\.md$/i, "")
+    .replace(/\.(png|jpe?g|gif|webp|svg)$/i, "");
+}
+
+function siblingPath(currentEntryPath: string, target: string): string | null {
+  const cleanTarget = normalizePath(target);
+  if (!currentEntryPath || cleanTarget.includes("/")) {
+    return null;
+  }
+
+  const parent = normalizePath(currentEntryPath).split("/").slice(0, -1).join("/");
+  return parent ? `${parent}/${cleanTarget}` : cleanTarget;
 }
 
 function isObsidianExcalidraw(raw: string): boolean {
@@ -707,11 +1012,13 @@ function normalizeLines(raw: string): string {
 }
 
 function calloutTitle(type: string): string {
-  const normalized = type.toLowerCase();
+  const normalized = calloutCanonicalType(type);
   const titles: Record<string, string> = {
+    abstract: "Abstract",
     note: "Note",
     info: "Info",
     tip: "Tip",
+    todo: "Todo",
     warning: "Warning",
     danger: "Danger",
     important: "Important",
@@ -726,11 +1033,13 @@ function calloutTitle(type: string): string {
 }
 
 function calloutIcon(type: string): string {
-  const normalized = type.toLowerCase();
+  const normalized = calloutCanonicalType(type);
   const icons: Record<string, string> = {
+    abstract: "≡",
     note: "i",
     info: "i",
-    tip: "*",
+    tip: "!",
+    todo: "✓",
     warning: "!",
     danger: "!",
     important: "!",
@@ -742,6 +1051,27 @@ function calloutIcon(type: string): string {
     quote: ">"
   };
   return icons[normalized] ?? "i";
+}
+
+function calloutCanonicalType(type: string): string {
+  const normalized = type.toLowerCase();
+  const aliases: Record<string, string> = {
+    summary: "abstract",
+    tldr: "abstract",
+    hint: "tip",
+    check: "success",
+    done: "success",
+    fail: "failure",
+    failed: "failure",
+    missing: "failure",
+    error: "danger",
+    caution: "warning",
+    attention: "warning",
+    help: "question",
+    faq: "question",
+    cite: "quote"
+  };
+  return aliases[normalized] ?? normalized;
 }
 
 function safeClassName(value: string): string {
@@ -808,6 +1138,10 @@ function firstFiniteNumber(...values: unknown[]): number | null {
 
 function filename(filePath: string): string {
   return filePath.split("/").at(-1) ?? filePath;
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 }
 
 function escapeHtml(value: string): string {

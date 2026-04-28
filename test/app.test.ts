@@ -3101,6 +3101,8 @@ test("public markdown CRDT viewer receives live edits and member awareness", asy
   let publicProvider: HocuspocusProvider | undefined;
   let writerDoc: Y.Doc | undefined;
   let publicDoc: Y.Doc | undefined;
+  let publicEventStream: SseStream | undefined;
+  let memberPresenceStream: SseStream | undefined;
 
   try {
     await app.rolay.auth.upsertUser({
@@ -3164,7 +3166,26 @@ test("public markdown CRDT viewer receives live edits and member awareness", asy
     const address = app.server.address();
     assert.ok(address && typeof address === "object");
     const wsUrl = `ws://127.0.0.1:${address.port}/v1/crdt`;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
     (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
+
+    publicEventStream = await openPublicSseStream(
+      `${baseUrl}/public/api/rooms/${roomId}/events`
+    );
+    const publicViewerSnapshot = await waitForSseEvent(
+      publicEventStream!,
+      "public.note-viewers.snapshot"
+    );
+    assert.deepEqual(JSON.parse(publicViewerSnapshot.data ?? "{}"), {
+      workspaceId: roomId,
+      notes: []
+    });
+
+    memberPresenceStream = await openSseStream(
+      `${baseUrl}/v1/workspaces/${roomId}/note-presence/events`,
+      writerSession.accessToken
+    );
+    await waitForSseEvent(memberPresenceStream, "presence.snapshot");
 
     const writerTokenResponse = await app.inject({
       method: "POST",
@@ -3213,6 +3234,33 @@ test("public markdown CRDT viewer receives live edits and member awareness", asy
     publicProvider.awareness?.setLocalState(null);
 
     await waitFor(() => writerSynced && publicSynced);
+    await waitForSseEventMatching<{
+      workspaceId: string;
+      entryId: string;
+      anonymousViewerCount: number;
+    }>(
+      publicEventStream,
+      "public.note-viewers.updated",
+      (payload) =>
+        payload.workspaceId === roomId &&
+        payload.entryId === markdownEntry.id &&
+        payload.anonymousViewerCount === 1
+    );
+    await waitForSseEventMatching<{
+      workspaceId: string;
+      entryId: string;
+      viewers: unknown[];
+      anonymousViewerCount?: number;
+    }>(
+      memberPresenceStream!,
+      "note.presence.updated",
+      (payload) =>
+        payload.workspaceId === roomId &&
+        payload.entryId === markdownEntry.id &&
+        payload.anonymousViewerCount === 1 &&
+        payload.viewers.length === 0
+    );
+
     writerText.insert(0, "Live public update");
     await waitFor(() => publicText.toString() === "Live public update");
 
@@ -3250,6 +3298,8 @@ test("public markdown CRDT viewer receives live edits and member awareness", asy
   } finally {
     writerProvider?.destroy();
     publicProvider?.destroy();
+    await publicEventStream?.reader.cancel();
+    await memberPresenceStream?.reader.cancel();
     writerDoc?.destroy();
     publicDoc?.destroy();
     await app.close();
@@ -3373,11 +3423,18 @@ test("public markdown CRDT token is read-only and does not publish public presen
   const presenceSnapshot = app.rolay.notePresence.getSnapshot(roomId);
   assert.deepEqual(presenceSnapshot, {
     workspaceId: roomId,
-    notes: []
+    notes: [
+      {
+        entryId: markdownEntry.id,
+        viewers: [],
+        anonymousViewerCount: 1
+      }
+    ]
   });
 
   publicProvider.destroy();
   publicDoc.destroy();
+  await waitFor(() => app.rolay.notePresence.getSnapshot(roomId).notes.length === 0);
 
   const secondTokenResponse = await app.inject({
     method: "POST",
@@ -3403,6 +3460,7 @@ test("public markdown CRDT token is read-only and does not publish public presen
 
   freshProvider.destroy();
   freshPublicDoc.destroy();
+  await waitFor(() => app.rolay.notePresence.getSnapshot(roomId).notes.length === 0);
   await app.close();
   await cleanupTestEnv(env);
 });

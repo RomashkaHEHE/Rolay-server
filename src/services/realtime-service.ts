@@ -6,6 +6,8 @@ import {
   Hocuspocus,
   afterUnloadDocumentPayload,
   beforeHandleMessagePayload,
+  connectedPayload,
+  onDisconnectPayload,
   onAwarenessUpdatePayload
 } from "@hocuspocus/server";
 import type { FastifyBaseLogger } from "fastify";
@@ -19,12 +21,14 @@ import { MemoryState, StoredWorkspace } from "./memory-state";
 import { NotePresenceService } from "./note-presence-service";
 import { NoteReadStateService } from "./note-read-state-service";
 import { PublicAccessService } from "./public-access-service";
+import { PublicViewerPresenceService } from "./public-viewer-presence-service";
 import { StorageService } from "./storage-service";
 
 interface RealtimeContext {
   workspaceId: string;
   entryId: string;
   publicAccess: boolean;
+  publicPresenceId?: string;
   userId?: string;
   role?: Membership["role"];
 }
@@ -94,6 +98,7 @@ export class RealtimeService {
     private readonly notePresence: NotePresenceService,
     private readonly noteReadState: NoteReadStateService,
     private readonly publicAccess: PublicAccessService,
+    private readonly publicViewerPresence: PublicViewerPresenceService,
     private readonly env: AppEnv,
     private readonly logger: FastifyBaseLogger
   ) {
@@ -103,6 +108,9 @@ export class RealtimeService {
       onAuthenticate: async (payload) => {
         return this.handleAuthenticate(payload.documentName, payload.token, payload.connectionConfig);
       },
+      connected: async (payload) => {
+        this.handleConnected(payload);
+      },
       onLoadDocument: async (payload) => {
         return this.loadDocument(payload.documentName);
       },
@@ -111,6 +119,9 @@ export class RealtimeService {
       },
       beforeHandleMessage: async (payload) => {
         this.assertMessageAllowed(payload);
+      },
+      onDisconnect: async (payload) => {
+        this.handleDisconnect(payload);
       },
       onStoreDocument: async (payload) => {
         await this.storeDocument(payload.documentName, payload.document);
@@ -237,6 +248,32 @@ export class RealtimeService {
       role: context.membership.role,
       publicAccess: false
     };
+  }
+
+  private handleConnected(payload: connectedPayload): void {
+    const context = payload.context as RealtimeContext | undefined;
+    if (!context?.publicAccess) {
+      return;
+    }
+
+    const presenceId = `public:${context.workspaceId}:${context.entryId}:${payload.socketId}`;
+    context.publicPresenceId = presenceId;
+    this.publicViewerPresence.registerViewer({
+      presenceId,
+      workspaceId: context.workspaceId,
+      entryId: context.entryId
+    });
+  }
+
+  private handleDisconnect(payload: onDisconnectPayload): void {
+    const context = payload.context as RealtimeContext | undefined;
+    if (!context?.publicAccess) {
+      return;
+    }
+
+    this.publicViewerPresence.unregisterViewer(
+      context.publicPresenceId ?? `public:${context.workspaceId}:${context.entryId}:${payload.socketId}`
+    );
   }
 
   private async loadDocument(documentName: string): Promise<Y.Doc | undefined> {

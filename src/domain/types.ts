@@ -233,6 +233,7 @@ export interface NotePresenceViewer {
 export interface NotePresenceNoteSnapshot {
   entryId: string;
   viewers: NotePresenceViewer[];
+  anonymousViewerCount?: number;
 }
 
 export interface NotePresenceSnapshot {
@@ -244,6 +245,23 @@ export interface NotePresenceUpdate {
   workspaceId: string;
   entryId: string;
   viewers: NotePresenceViewer[];
+  anonymousViewerCount?: number;
+}
+
+export interface PublicViewerPresenceNoteSnapshot {
+  entryId: string;
+  anonymousViewerCount: number;
+}
+
+export interface PublicViewerPresenceSnapshot {
+  workspaceId: string;
+  notes: PublicViewerPresenceNoteSnapshot[];
+}
+
+export interface PublicViewerPresenceUpdate {
+  workspaceId: string;
+  entryId: string;
+  anonymousViewerCount: number;
 }
 
 export interface NoteReadStateNoteSnapshot {

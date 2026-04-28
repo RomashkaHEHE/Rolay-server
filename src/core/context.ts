@@ -6,6 +6,7 @@ import { MemoryState } from "../services/memory-state";
 import { NotePresenceService } from "../services/note-presence-service";
 import { NoteReadStateService } from "../services/note-read-state-service";
 import { PublicAccessService } from "../services/public-access-service";
+import { PublicViewerPresenceService } from "../services/public-viewer-presence-service";
 import { SettingsEventsService } from "../services/settings-events-service";
 import { createStateStore, StateStore } from "../services/state-store";
 import { StorageService } from "../services/storage-service";
@@ -23,6 +24,7 @@ export interface RolayContext {
   notePresence: NotePresenceService;
   noteReadState: NoteReadStateService;
   publicAccess: PublicAccessService;
+  publicViewerPresence: PublicViewerPresenceService;
   storage: StorageService;
 }
 
@@ -31,7 +33,8 @@ export async function createRolayContext(env: AppEnv): Promise<RolayContext> {
   const state = await stateStore.loadState();
   const storage = new StorageService(env);
   const settingsEvents = new SettingsEventsService(state);
-  const notePresence = new NotePresenceService(state);
+  const publicViewerPresence = new PublicViewerPresenceService(state);
+  const notePresence = new NotePresenceService(state, publicViewerPresence);
   const noteReadState = new NoteReadStateService(state, stateStore, notePresence);
   const auth = new AuthService(state, env, stateStore, settingsEvents);
   const workspaces = new WorkspaceService(state, stateStore, settingsEvents);
@@ -53,6 +56,7 @@ export async function createRolayContext(env: AppEnv): Promise<RolayContext> {
     notePresence,
     noteReadState,
     publicAccess,
+    publicViewerPresence,
     storage
   };
 }

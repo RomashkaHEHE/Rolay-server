@@ -77,6 +77,7 @@ single-editor Excalidraw live sessions, room tree sync, and blob-based attachmen
 - room tree state is server-authoritative, not CRDT-based
 - room publication is opt-in; rooms are private by default and only owner/admin can toggle public read-only access
 - public read-only Markdown uses short-lived read-only CRDT tokens and does not publish visitor presence
+- public read-only Markdown connections are counted separately as anonymous per-note viewer counts
 - public web Markdown renders as a read-only preview, including math, callouts, basic formatting,
   embedded images, and Obsidian Excalidraw plugin notes marked with `excalidraw-plugin: parsed`
 - public manifests show folders, Markdown notes, and Excalidraw files; image blobs are exposed only as assets for embedded Markdown images

@@ -70,6 +70,7 @@ export async function buildApp(
     app.rolay.notePresence,
     app.rolay.noteReadState,
     app.rolay.publicAccess,
+    app.rolay.publicViewerPresence,
     env,
     app.log
   );

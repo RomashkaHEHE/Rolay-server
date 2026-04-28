@@ -228,6 +228,8 @@ Rules:
   authenticated member cursors, but visitor awareness is never applied to the shared document
 - public room events reuse room event sequence IDs but only expose safe tree/blob/publication
   events
+- the public room event stream also emits live-only anonymous viewer count events:
+  `public.note-viewers.snapshot` and `public.note-viewers.updated`
 
 Example public room list:
 
@@ -285,6 +287,30 @@ Example public manifest:
 }
 ```
 
+Example public anonymous viewer snapshot:
+
+```json
+{
+  "workspaceId": "ws_1",
+  "notes": [
+    {
+      "entryId": "fil_123",
+      "anonymousViewerCount": 2
+    }
+  ]
+}
+```
+
+Example public anonymous viewer update:
+
+```json
+{
+  "workspaceId": "ws_1",
+  "entryId": "fil_123",
+  "anonymousViewerCount": 3
+}
+```
+
 ## Note Presence SSE
 
 - `GET /v1/workspaces/{workspaceId}/note-presence/events`
@@ -317,6 +343,8 @@ Presence rules:
 - presence is keyed by `workspaceId` + `entryId`
 - each live viewer gets its own `presenceId`
 - the same `userId` can appear multiple times
+- `anonymousViewerCount` is optional and reports current read-only public website viewers for the
+  same note; these anonymous viewers are counted separately and are not included in `viewers`
 
 Example snapshot payload:
 
@@ -326,6 +354,7 @@ Example snapshot payload:
   "notes": [
     {
       "entryId": "fil_123",
+      "anonymousViewerCount": 1,
       "viewers": [
         {
           "presenceId": "presence:ws_1:fil_123:9384702",
@@ -347,6 +376,7 @@ Example per-note update payload:
 {
   "workspaceId": "ws_1",
   "entryId": "fil_123",
+  "anonymousViewerCount": 1,
   "viewers": [
     {
       "presenceId": "presence:ws_1:fil_123:9384702",

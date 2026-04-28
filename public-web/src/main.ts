@@ -17,6 +17,7 @@ interface TreeNode {
   path: string;
   folders: Map<string, TreeNode>;
   files: PublicEntry[];
+  noteEntry?: PublicEntry;
 }
 
 interface AppState {
@@ -24,7 +25,8 @@ interface AppState {
   manifest: PublicManifest | null;
   roomId: string | null;
   entryId: string | null;
-  collapsedFolders: Set<string>;
+  expandedFolders: Set<string>;
+  anonymousViewerCounts: Map<string, number>;
   eventSource: EventSource | null;
   markdownViewer: MarkdownViewer | null;
 }
@@ -79,7 +81,8 @@ const state: AppState = {
   manifest: null,
   roomId: null,
   entryId: null,
-  collapsedFolders: new Set(),
+  expandedFolders: new Set(),
+  anonymousViewerCounts: new Map(),
   eventSource: null,
   markdownViewer: null
 };
@@ -122,7 +125,8 @@ async function loadRooms(): Promise<void> {
 async function selectRoom(workspaceId: string): Promise<void> {
   cleanupLiveDocument();
   state.roomId = workspaceId;
-  state.collapsedFolders = loadCollapsedFolders(workspaceId);
+  state.expandedFolders = loadExpandedFolders(workspaceId);
+  state.anonymousViewerCounts = new Map();
   setCookie("rolay_public_room", workspaceId);
   roomSelect.value = workspaceId;
   status.textContent = "Загружаю структуру комнаты...";
@@ -149,7 +153,6 @@ async function selectRoom(workspaceId: string): Promise<void> {
     return;
   }
 
-  expandAncestors(entry.path);
   renderEntries();
   await selectEntry(entry.id);
 }
@@ -166,7 +169,8 @@ async function refreshManifest(): Promise<void> {
   if (state.entryId) {
     const active = manifest.entries.find((entry) => entry.id === state.entryId);
     if (active) {
-      expandAncestors(active.path);
+      title.textContent = filename(active.path);
+      eyebrow.textContent = breadcrumb(active.path);
     }
   }
   renderEntries();
@@ -192,10 +196,9 @@ async function selectEntry(entryId: string): Promise<void> {
   cleanupLiveDocument();
   state.entryId = entryId;
   setCookie("rolay_public_entry", entryId);
-  expandAncestors(entry.path);
   renderEntries();
   title.textContent = filename(entry.path);
-  eyebrow.textContent = entry.path;
+  eyebrow.textContent = breadcrumb(entry.path);
   status.textContent = "";
   status.classList.add("hidden");
 
@@ -218,7 +221,8 @@ async function openMarkdown(entry: PublicEntry, manifest: PublicManifest): Promi
     entry,
     manifest,
     editorHost,
-    presence
+    presence,
+    getAnonymousViewerCount: () => anonymousViewerCount(entry.id)
   });
 }
 
@@ -274,6 +278,35 @@ function openEventStream(manifest: PublicManifest): void {
       void refreshManifest();
     });
   }
+  source.addEventListener("public.note-viewers.snapshot", (event) => {
+    const payload = JSON.parse((event as MessageEvent).data) as {
+      notes?: Array<{ entryId?: unknown; anonymousViewerCount?: unknown }>;
+    };
+    state.anonymousViewerCounts = new Map();
+    for (const note of payload.notes ?? []) {
+      if (typeof note.entryId === "string" && typeof note.anonymousViewerCount === "number") {
+        state.anonymousViewerCounts.set(note.entryId, note.anonymousViewerCount);
+      }
+    }
+    renderEntries();
+    updateActiveAnonymousViewerCount();
+  });
+  source.addEventListener("public.note-viewers.updated", (event) => {
+    const payload = JSON.parse((event as MessageEvent).data) as {
+      entryId?: unknown;
+      anonymousViewerCount?: unknown;
+    };
+    if (typeof payload.entryId !== "string" || typeof payload.anonymousViewerCount !== "number") {
+      return;
+    }
+    if (payload.anonymousViewerCount > 0) {
+      state.anonymousViewerCounts.set(payload.entryId, payload.anonymousViewerCount);
+    } else {
+      state.anonymousViewerCounts.delete(payload.entryId);
+    }
+    renderEntries();
+    updateActiveAnonymousViewerCount();
+  });
   state.eventSource = source;
 }
 
@@ -307,41 +340,46 @@ function renderTreeNode(node: TreeNode, level: number): void {
   );
 
   for (const folder of folders) {
-    const collapsed = state.collapsedFolders.has(folder.path);
+    const expanded = state.expandedFolders.has(folder.path);
+    const collapsed = !expanded;
     const button = document.createElement("button");
-    button.className = "entry folder-entry";
+    button.className = `entry folder-entry ${folder.noteEntry?.id === state.entryId ? "active" : ""}`;
     button.type = "button";
     button.style.paddingLeft = `${10 + level * 16}px`;
-    button.setAttribute("aria-expanded", String(!collapsed));
+    button.setAttribute("aria-expanded", String(expanded));
     button.innerHTML = `
       <span class="folder-caret">${collapsed ? "▸" : "▾"}</span>
-      <span class="entry-kind">dir</span>
+      <span class="folder-glyph" aria-hidden="true"></span>
       <span class="entry-label">${escapeHtml(folder.name)}</span>
+      ${folder.noteEntry ? '<span class="folder-note-dot" title="Folder note"></span>' : ""}
     `;
-    button.addEventListener("click", () => {
-      if (collapsed) {
-        state.collapsedFolders.delete(folder.path);
-      } else {
-        state.collapsedFolders.add(folder.path);
+    button.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement | null)?.closest(".folder-caret")) {
+        toggleFolder(folder.path);
+        return;
       }
-      saveCollapsedFolders();
-      renderEntries();
+      if (folder.noteEntry) {
+        void selectEntry(folder.noteEntry.id);
+        return;
+      }
+      toggleFolder(folder.path);
     });
     entryList.append(button);
 
-    if (!collapsed) {
+    if (expanded) {
       renderTreeNode(folder, level + 1);
     }
   }
 
-  for (const file of files) {
+  for (const file of files.filter((file) => file.id !== node.noteEntry?.id)) {
     const button = document.createElement("button");
     button.className = `entry file-entry ${file.id === state.entryId ? "active" : ""}`;
     button.type = "button";
     button.style.paddingLeft = `${32 + level * 16}px`;
     button.innerHTML = `
-      <span class="entry-kind">${file.kind === "markdown" ? "md" : "draw"}</span>
+      <span class="file-glyph ${file.kind === "excalidraw" ? "file-glyph-drawing" : ""}" aria-hidden="true"></span>
       <span class="entry-label">${escapeHtml(filename(file.path))}</span>
+      ${anonymousViewerCount(file.id) > 0 ? `<span class="entry-viewers">${anonymousViewerCount(file.id)}</span>` : ""}
     `;
     button.addEventListener("click", () => {
       void selectEntry(file.id);
@@ -376,6 +414,7 @@ function buildTree(entries: PublicEntry[]): TreeNode {
     parent.files.push(entry);
   }
 
+  assignFolderNotes(root);
   return root;
 }
 
@@ -398,19 +437,32 @@ function ensureFolder(root: TreeNode, segments: string[]): TreeNode {
   return cursor;
 }
 
-function expandAncestors(filePath: string): void {
-  const parts = normalizePath(filePath).split("/").filter(Boolean).slice(0, -1);
-  let current = "";
-  for (const part of parts) {
-    current = current ? `${current}/${part}` : part;
-    state.collapsedFolders.delete(current);
+function assignFolderNotes(node: TreeNode): void {
+  for (const folder of node.folders.values()) {
+    const expectedPath = normalizePath(`${folder.path}/${folder.name}.md`).toLowerCase();
+    const noteEntry = folder.files.find(
+      (file) => file.kind === "markdown" && normalizePath(file.path).toLowerCase() === expectedPath
+    );
+    if (noteEntry) {
+      folder.noteEntry = noteEntry;
+    }
+    assignFolderNotes(folder);
   }
-  saveCollapsedFolders();
 }
 
-function loadCollapsedFolders(workspaceId: string): Set<string> {
+function toggleFolder(folderPath: string): void {
+  if (state.expandedFolders.has(folderPath)) {
+    state.expandedFolders.delete(folderPath);
+  } else {
+    state.expandedFolders.add(folderPath);
+  }
+  saveExpandedFolders();
+  renderEntries();
+}
+
+function loadExpandedFolders(workspaceId: string): Set<string> {
   try {
-    const raw = localStorage.getItem(`rolay_public_collapsed_${workspaceId}`);
+    const raw = cookie(`rolay_public_expanded_${workspaceId}`);
     const parsed = raw ? (JSON.parse(raw) as unknown) : [];
     return Array.isArray(parsed)
       ? new Set(parsed.filter((value): value is string => typeof value === "string"))
@@ -420,14 +472,25 @@ function loadCollapsedFolders(workspaceId: string): Set<string> {
   }
 }
 
-function saveCollapsedFolders(): void {
+function saveExpandedFolders(): void {
   if (!state.roomId) {
     return;
   }
-  localStorage.setItem(
-    `rolay_public_collapsed_${state.roomId}`,
-    JSON.stringify([...state.collapsedFolders])
+  setCookie(`rolay_public_expanded_${state.roomId}`, JSON.stringify([...state.expandedFolders]));
+}
+
+function anonymousViewerCount(entryId: string): number {
+  return state.anonymousViewerCounts.get(entryId) ?? 0;
+}
+
+function updateActiveAnonymousViewerCount(): void {
+  state.markdownViewer?.updateAnonymousViewerCount(
+    state.entryId ? anonymousViewerCount(state.entryId) : 0
   );
+}
+
+function breadcrumb(filePath: string): string {
+  return normalizePath(filePath).split("/").join(" / ");
 }
 
 function showEmpty(message: string): void {

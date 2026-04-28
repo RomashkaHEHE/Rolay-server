@@ -6,7 +6,11 @@ import {
   ensureNonNegativeInteger,
   requireString
 } from "../../core/validation";
-import { WorkspaceEvent } from "../../domain/types";
+import {
+  PublicViewerPresenceSnapshot,
+  PublicViewerPresenceUpdate,
+  WorkspaceEvent
+} from "../../domain/types";
 
 function getHeaderValue(value: string | string[] | undefined): string | undefined {
   if (typeof value === "string") {
@@ -34,6 +38,15 @@ function writeEvent(reply: FastifyReply, event: WorkspaceEvent): void {
   reply.raw.write(`id: ${event.seq}\n`);
   reply.raw.write(`event: ${event.eventType}\n`);
   reply.raw.write(`data: ${JSON.stringify(event.payload)}\n\n`);
+}
+
+function writeLiveEvent(
+  reply: FastifyReply,
+  event: "public.note-viewers.snapshot" | "public.note-viewers.updated",
+  payload: PublicViewerPresenceSnapshot | PublicViewerPresenceUpdate
+): void {
+  reply.raw.write(`event: ${event}\n`);
+  reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
 const publicApiRoutes: FastifyPluginAsync = async (app) => {
@@ -103,6 +116,9 @@ const publicApiRoutes: FastifyPluginAsync = async (app) => {
     };
 
     const stream = app.rolay.publicAccess.openEventStream(workspaceId, cursor, sendEvent);
+    const viewerStream = app.rolay.publicViewerPresence.openStream(workspaceId, (event) => {
+      writeLiveEvent(reply, event.type, event.payload);
+    });
 
     reply.hijack();
     reply.raw.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -123,9 +139,11 @@ const publicApiRoutes: FastifyPluginAsync = async (app) => {
       closed = true;
       clearInterval(keepAlive);
       stream.unsubscribe();
+      viewerStream.unsubscribe();
       reply.raw.end();
     };
 
+    writeLiveEvent(reply, "public.note-viewers.snapshot", viewerStream.snapshot);
     for (const event of stream.initialEvents) {
       sendEvent(event);
     }

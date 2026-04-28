@@ -76,7 +76,7 @@ Each route module is intentionally thin. If you need actual behavior, jump from 
 - `src/modules/public-api/public-api.routes.ts`
   - unauthenticated published room list
   - public manifest
-  - public room event SSE
+  - public room event SSE, including live anonymous note-viewer counts
   - public read-only Markdown CRDT token
   - public image/Excalidraw blob content
 
@@ -156,11 +156,17 @@ Most business logic lives here.
   - public read-only CRDT token issuance
   - public blob allowlist checks
 
+- `src/services/public-viewer-presence-service.ts`
+  - ephemeral counts of anonymous public web viewers per Markdown note
+  - public SSE `public.note-viewers.*` events
+  - count bridge into authenticated note-presence payloads
+
 - `src/services/note-presence-service.ts`
   - room-level live note presence aggregation
   - viewer snapshot/update fanout
   - duplicate-presence handling for multi-device users
   - forwards awareness `sessionId` into room-level presence viewers for follow mode
+  - adds optional `anonymousViewerCount` from public website viewers
 
 - `src/services/note-read-state-service.ts`
   - per-account Markdown unread/read-state snapshots
@@ -233,9 +239,10 @@ Do not confuse them.
 ### Public Room SSE
 
 - implementation: `src/modules/public-api/public-api.routes.ts`
-- state source: `src/services/public-access-service.ts`
+- state source: `src/services/public-access-service.ts` plus
+  `src/services/public-viewer-presence-service.ts` for live anonymous viewer counts
 - scope: one published room
-- payloads: safe tree/blob/publication events only
+- payloads: safe tree/blob/publication events and live-only `public.note-viewers.*` events
 - no auth, no management data, no invite/member payloads
 
 ## Markdown Vs Binary
