@@ -8,6 +8,7 @@ interface ExcalidrawScene {
 }
 
 const DARK_DRAWING_BACKGROUND = "#151821";
+const DEFAULT_DRAWING_BACKGROUND = "#f8f4e8";
 const MIN_DRAWING_SCALE = 0.25;
 const MAX_DRAWING_SCALE = 4;
 const DRAWING_SCALE_STEP = 1.2;
@@ -38,13 +39,20 @@ async function renderOfficialExcalidraw(
 ): Promise<void> {
   const interactive = shouldUseInteractiveViewport(drawingHost);
   const elements = restoreElements((scene.elements ?? []) as never[], null);
+  const sceneTheme = scene.appState?.theme === "dark" ? "dark" : "light";
+  const sceneBackground =
+    typeof scene.appState?.viewBackgroundColor === "string"
+      ? scene.appState.viewBackgroundColor
+      : sceneTheme === "dark"
+        ? DARK_DRAWING_BACKGROUND
+        : DEFAULT_DRAWING_BACKGROUND;
   const appState = restoreAppState(
     {
       ...(scene.appState ?? {}),
-      theme: "dark",
-      viewBackgroundColor: DARK_DRAWING_BACKGROUND,
+      theme: sceneTheme,
+      viewBackgroundColor: sceneBackground,
       exportBackground: true,
-      exportWithDarkMode: true
+      exportWithDarkMode: sceneTheme === "dark"
     },
     null
   );
@@ -85,7 +93,7 @@ function renderFallbackCanvas(scene: ExcalidrawScene, drawingHost: HTMLElement):
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
   ctx.scale(ratio, ratio);
-  ctx.fillStyle = DARK_DRAWING_BACKGROUND;
+  ctx.fillStyle = DEFAULT_DRAWING_BACKGROUND;
   ctx.fillRect(0, 0, width, height);
   ctx.translate(48 - bounds.minX, 48 - bounds.minY);
   ctx.lineCap = "round";
@@ -449,7 +457,7 @@ function drawElement(ctx: CanvasRenderingContext2D, element: Record<string, unkn
   const y = Number(element.y ?? 0);
   const width = Number(element.width ?? 0);
   const height = Number(element.height ?? 0);
-  const color = darkDrawingColor(String(element.strokeColor ?? "#f2ecd7"));
+  const color = String(element.strokeColor ?? "#1e1e1e");
   ctx.strokeStyle = color === "transparent" ? "#f2ecd7" : color;
   ctx.fillStyle = String(element.backgroundColor ?? "transparent");
   ctx.lineWidth = Number(element.strokeWidth ?? 2);
@@ -508,10 +516,4 @@ function fillAndStroke(ctx: CanvasRenderingContext2D, draw: () => void): void {
     ctx.fill();
   }
   ctx.stroke();
-}
-
-function darkDrawingColor(color: string): string {
-  return /^(#000|#000000|black|rgb\(0,\s*0,\s*0\))$/i.test(color.trim())
-    ? "#f2ecd7"
-    : color;
 }
