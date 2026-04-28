@@ -978,10 +978,12 @@ function renderRemotePresence(
   if (anonymousViewerCount > 0) {
     const chip = document.createElement("span");
     chip.className = "presence-chip anonymous-viewers";
-    chip.textContent =
-      anonymousViewerCount === 1
-        ? "1 anonymous reader"
-        : `${anonymousViewerCount} anonymous readers`;
+    chip.setAttribute("aria-label", anonymousViewerLabel(anonymousViewerCount));
+    chip.title = anonymousViewerLabel(anonymousViewerCount);
+    chip.innerHTML = `
+      <span class="presence-eye" aria-hidden="true"></span>
+      <span class="presence-count">${anonymousViewerCount}</span>
+    `;
     presence.append(chip);
   }
 
@@ -992,6 +994,13 @@ function renderRemotePresence(
     chip.textContent = viewer.label;
     presence.append(chip);
   }
+}
+
+function anonymousViewerLabel(count: number): string {
+  const suffix = count % 10 === 1 && count % 100 !== 11
+    ? "анонимный читатель"
+    : "анонимных читателей";
+  return `${count} ${suffix}`;
 }
 
 function renderRemoteCursors(article: HTMLElement, viewers: RemoteViewer[], sourceText: string): void {

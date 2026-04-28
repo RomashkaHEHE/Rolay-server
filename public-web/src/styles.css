@@ -388,8 +388,39 @@ h1 {
 }
 
 .anonymous-viewers {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border-color: rgba(209, 147, 88, 0.58) !important;
   color: #f0c494;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.presence-eye {
+  position: relative;
+  width: 15px;
+  height: 10px;
+  border: 1.7px solid currentColor;
+  border-radius: 999px 999px 999px 999px / 78% 78% 78% 78%;
+  transform: rotate(-3deg);
+}
+
+.presence-eye::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translate(-50%, -50%);
+}
+
+.presence-count {
+  min-width: 1ch;
+  line-height: 1;
 }
 
 .presence-chip.has-selection {
