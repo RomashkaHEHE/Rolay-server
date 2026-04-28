@@ -196,6 +196,14 @@ select {
   background: rgba(209, 147, 88, 0.1);
 }
 
+.folder-caret-static {
+  color: rgba(170, 161, 147, 0.58);
+}
+
+.folder-entry:hover .folder-caret-static {
+  background: transparent;
+}
+
 .folder-glyph,
 .file-glyph {
   width: 9px;

@@ -340,33 +340,40 @@ function renderTreeNode(node: TreeNode, level: number): void {
   );
 
   for (const folder of folders) {
+    const canExpand = hasVisibleChildren(folder);
     const expanded = state.expandedFolders.has(folder.path);
     const collapsed = !expanded;
     const button = document.createElement("button");
     button.className = `entry folder-entry ${folder.noteEntry?.id === state.entryId ? "active" : ""}`;
     button.type = "button";
     button.style.paddingLeft = `${10 + level * 16}px`;
-    button.setAttribute("aria-expanded", String(expanded));
+    if (canExpand) {
+      button.setAttribute("aria-expanded", String(expanded));
+    }
     button.innerHTML = `
-      <span class="folder-caret">${collapsed ? "▸" : "▾"}</span>
+      <span class="folder-caret ${canExpand ? "" : "folder-caret-static"}">${canExpand ? (collapsed ? "▸" : "▾") : "-"}</span>
       <span class="folder-glyph ${folder.noteEntry ? "folder-glyph-note" : ""}" aria-hidden="true"></span>
       <span class="entry-label">${escapeHtml(folder.name)}</span>
       ${folder.noteEntry ? '<span class="folder-note-dot" title="Folder note"></span>' : ""}
     `;
     button.addEventListener("click", (event) => {
       if ((event.target as HTMLElement | null)?.closest(".folder-caret")) {
-        toggleFolder(folder.path);
+        if (canExpand) {
+          toggleFolder(folder.path);
+        }
         return;
       }
       if (folder.noteEntry) {
         void selectEntry(folder.noteEntry.id);
         return;
       }
-      toggleFolder(folder.path);
+      if (canExpand) {
+        toggleFolder(folder.path);
+      }
     });
     entryList.append(button);
 
-    if (expanded) {
+    if (expanded && canExpand) {
       renderTreeNode(folder, level + 1);
     }
   }
@@ -386,6 +393,13 @@ function renderTreeNode(node: TreeNode, level: number): void {
     });
     entryList.append(button);
   }
+}
+
+function hasVisibleChildren(folder: TreeNode): boolean {
+  return (
+    folder.folders.size > 0 ||
+    folder.files.some((file) => file.id !== folder.noteEntry?.id)
+  );
 }
 
 function buildTree(entries: PublicEntry[]): TreeNode {
