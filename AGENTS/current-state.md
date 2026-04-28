@@ -52,12 +52,15 @@ If you start another substantial feature, create a new task file before leaving 
 
 ## Deployment Snapshot
 
-- Production host: `http://46.16.36.87:3000`
+- Production host: `https://rolay.ru`
+- Raw VPS address: `46.16.36.87`
 - Production images are published as `ghcr.io/romashkahehe/rolay-server:sha-<12-char-commit>`
   by the `deploy` GitHub Actions workflow on `main`.
 - `/` serves the bundled public read-only web app.
 - `/ready` and existing `/v1/*` APIs remain on the same Fastify/Docker service.
 - `/public/api/rooms` is live and returns published rooms only.
+- Ubuntu `nginx` terminates TLS for `rolay.ru` and proxies to the Docker app on `127.0.0.1:3000`.
+- Let's Encrypt certificates are managed by `certbot --nginx`.
 
 ## Recently Completed Changes
 
@@ -131,6 +134,8 @@ For canonical protocol details:
   remain lazy-loaded chunks rather than blocking `/`.
 - The plugin still needs UI wiring for publication toggles and public-link display; server support is
   already present.
+- Keep production `.env` domain URLs aligned with `https://rolay.ru`; public CRDT tokens should
+  advertise `wss://rolay.ru/v1/crdt`.
 - `docs/*` should remain factual; do not dump unfinished-task memory there.
 - If you touch a protocol edge used by the plugin, update:
   - the task file, if the work is ongoing

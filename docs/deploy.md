@@ -21,7 +21,8 @@ Current live target:
 - OS: `Ubuntu 22.04`
 - user: `user1`
 - deploy path: `/home/user1/rolay-server`
-- direct public access currently on port `3000`
+- public URL: `https://rolay.ru`
+- app container still listens on `3000`, but public traffic goes through `nginx` on `80/443`
 
 ## Workflow Files
 
@@ -38,9 +39,10 @@ The deploy workflow currently:
 4. logs into `ghcr.io`
 5. sets `ROLAY_IMAGE` to the current GHCR tag
 6. runs `docker compose -f docker-compose.prod.yml pull`
-7. runs `docker compose -f docker-compose.prod.yml up -d --remove-orphans`
-8. logs out of `ghcr.io`
-9. prunes dangling images
+7. persists the deployed `ROLAY_IMAGE` tag into production `.env`
+8. runs `docker compose -f docker-compose.prod.yml up -d --remove-orphans`
+9. logs out of `ghcr.io`
+10. prunes dangling images
 
 ## Secrets Required In GitHub
 
@@ -63,6 +65,9 @@ Important production files on the VPS:
 
 - `/home/user1/rolay-server/.env`
 - `/home/user1/rolay-server/docker-compose.prod.yml`
+- `/etc/nginx/sites-available/rolay.ru`
+- `/etc/nginx/sites-enabled/rolay.ru`
+- `/etc/letsencrypt/live/rolay.ru/*`
 
 The runtime `.env` defines:
 
@@ -70,6 +75,7 @@ The runtime `.env` defines:
 - `CRDT_WS_URL`
 - `BLOB_UPLOAD_BASE_URL`
 - `BLOB_DOWNLOAD_BASE_URL`
+- `ROLAY_IMAGE`
 - `STATE_DRIVER`
 - `POSTGRES_*`
 - `STORAGE_DRIVER`
@@ -78,20 +84,34 @@ The runtime `.env` defines:
 
 ## Access And Networking
 
-Current setup exposes the app directly on:
+Current public setup exposes:
 
-- `3000/tcp`
+- `80/tcp` for HTTP to HTTPS redirect and Let's Encrypt renewal
+- `443/tcp` for public HTTPS
 
 The cloud security group must allow:
 
 - `22/tcp` for SSH
-- `3000/tcp` for current direct app access
-
-The better production target later is:
-
 - `80/tcp`
 - `443/tcp`
-- reverse proxy in front of the app
+
+The Docker container still publishes `3000/tcp`; it can remain open temporarily for debugging, but
+normal public traffic should use `https://rolay.ru`.
+
+## Domain And TLS
+
+`rolay.ru` has an A record pointing to `46.16.36.87`.
+
+The VPS uses Ubuntu `nginx` as the reverse proxy:
+
+- `http://rolay.ru/*` redirects to `https://rolay.ru/*`
+- `https://rolay.ru/*` proxies to `http://127.0.0.1:3000`
+- WebSocket upgrade headers are enabled for CRDT and drawing connections
+- proxy buffering is disabled so SSE streams can flush events promptly
+- `client_max_body_size` is set high enough for large blob uploads
+
+TLS is issued by Let's Encrypt through `certbot --nginx` and auto-renewed by certbot's scheduled
+renewal task.
 
 ## Operational Notes
 

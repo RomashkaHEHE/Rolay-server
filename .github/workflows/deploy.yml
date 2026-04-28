@@ -71,6 +71,13 @@ jobs:
               git pull --ff-only origin main
             fi
             export ROLAY_IMAGE="${{ needs.build-and-push.outputs.image }}:${{ needs.build-and-push.outputs.version }}"
+            if [ -f .env ]; then
+              if grep -q '^ROLAY_IMAGE=' .env; then
+                sed -i "s|^ROLAY_IMAGE=.*|ROLAY_IMAGE=${ROLAY_IMAGE}|" .env
+              else
+                printf '\nROLAY_IMAGE=%s\n' "${ROLAY_IMAGE}" >> .env
+              fi
+            fi
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
