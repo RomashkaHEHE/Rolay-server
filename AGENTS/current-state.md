@@ -89,8 +89,9 @@ If you start another substantial feature, create a new task file before leaving 
   optional `anonymousViewerCount`.
 - Improved the public web sidebar for Folder Notes, persisted expanded folders in cookies, fixed
   single-newline Markdown rendering, and added lazy embedded Excalidraw rendering from note embeds.
-- Fixed public web remote cursor positioning to map awareness source offsets through Markdown block
-  source ranges, including hidden heading/list/callout syntax and multi-line display math fences.
+- Fixed public web remote cursor and selection positioning to map awareness source offsets through
+  Markdown block source ranges, including hidden heading/list/callout syntax and multi-line display
+  math fences.
 
 ## Where To Look First
 

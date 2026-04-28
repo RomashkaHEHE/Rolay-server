@@ -664,6 +664,13 @@ h1 {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.16);
 }
 
+.remote-selection {
+  position: absolute;
+  border-radius: 3px;
+  opacity: 0.24;
+  mix-blend-mode: screen;
+}
+
 .remote-caret-label {
   position: absolute;
   left: 0;

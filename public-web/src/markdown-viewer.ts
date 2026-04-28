@@ -895,7 +895,24 @@ function renderRemoteCursors(article: HTMLElement, viewers: RemoteViewer[], sour
   article.append(layer);
 
   for (const viewer of selectedViewers) {
-    const position = Math.max(0, viewer.selection!.head);
+    const selection = viewer.selection!;
+    const rangeStart = Math.max(0, Math.min(selection.anchor, selection.head));
+    const rangeEnd = Math.max(0, Math.max(selection.anchor, selection.head));
+
+    if (rangeEnd > rangeStart) {
+      for (const rect of selectionRectsAtSourceRange(article, sourceText, rangeStart, rangeEnd)) {
+        const highlight = document.createElement("span");
+        highlight.className = "remote-selection";
+        highlight.style.left = `${rect.left}px`;
+        highlight.style.top = `${rect.top}px`;
+        highlight.style.width = `${rect.width}px`;
+        highlight.style.height = `${rect.height}px`;
+        highlight.style.background = viewer.color;
+        layer.append(highlight);
+      }
+    }
+
+    const position = Math.max(0, selection.head);
     const rect = caretRectAtSourceOffset(article, sourceText, position);
     if (!rect) {
       continue;
@@ -915,6 +932,93 @@ function renderRemoteCursors(article: HTMLElement, viewers: RemoteViewer[], sour
     caret.append(label);
     layer.append(caret);
   }
+}
+
+function selectionRectsAtSourceRange(
+  article: HTMLElement,
+  sourceText: string,
+  sourceStart: number,
+  sourceEnd: number
+): DOMRect[] {
+  if (sourceEnd <= sourceStart) {
+    return [];
+  }
+
+  return findSourceBlocksIntersecting(article, sourceStart, sourceEnd).flatMap((block) => {
+    const blockStart = Number(block.dataset.sourceStart ?? "0");
+    const blockEnd = Math.max(blockStart, Number(block.dataset.sourceEnd ?? blockStart));
+    const rangeStart = Math.max(sourceStart, blockStart);
+    const rangeEnd = Math.min(sourceEnd, blockEnd);
+    if (rangeEnd <= rangeStart) {
+      return [];
+    }
+
+    if (block.dataset.sourceKind === "math") {
+      const rect = selectionRectInMathBlock(article, block, blockStart, blockEnd, rangeStart, rangeEnd);
+      return rect ? [rect] : [];
+    }
+
+    const visibleStart = projectSourceToVisibleText(sourceText.slice(blockStart, rangeStart)).length;
+    const visibleEnd = projectSourceToVisibleText(sourceText.slice(blockStart, rangeEnd)).length;
+    return textRangeRectsAtTextOffsets(block, visibleStart, visibleEnd, article);
+  });
+}
+
+function findSourceBlocksIntersecting(
+  article: HTMLElement,
+  sourceStart: number,
+  sourceEnd: number
+): HTMLElement[] {
+  const candidates = [...article.querySelectorAll<HTMLElement>("[data-source-start][data-source-end]")].filter(
+    (candidate) => {
+      const start = Number(candidate.dataset.sourceStart);
+      const end = Number(candidate.dataset.sourceEnd);
+      return Number.isFinite(start) && Number.isFinite(end) && start < sourceEnd && sourceStart < end;
+    }
+  );
+
+  return candidates
+    .filter((candidate) => {
+      return !candidates.some((other) => {
+        if (candidate === other || !candidate.contains(other)) {
+          return false;
+        }
+
+        const otherStart = Number(other.dataset.sourceStart);
+        const otherEnd = Number(other.dataset.sourceEnd);
+        return otherStart < sourceEnd && sourceStart < otherEnd;
+      });
+    })
+    .sort((left, right) => Number(left.dataset.sourceStart) - Number(right.dataset.sourceStart));
+}
+
+function selectionRectInMathBlock(
+  article: HTMLElement,
+  block: HTMLElement,
+  blockStart: number,
+  blockEnd: number,
+  selectionStart: number,
+  selectionEnd: number
+): DOMRect | null {
+  const blockRect = block.getBoundingClientRect();
+  if (blockRect.width === 0 && blockRect.height === 0) {
+    return null;
+  }
+
+  const articleRect = article.getBoundingClientRect();
+  const span = Math.max(1, blockEnd - blockStart);
+  const startRatio = Math.max(0.04, Math.min(0.96, (selectionStart - blockStart) / span));
+  const endRatio = Math.max(startRatio, Math.min(0.96, (selectionEnd - blockStart) / span));
+  const left = blockRect.left - articleRect.left + blockRect.width * startRatio;
+  const right = blockRect.left - articleRect.left + blockRect.width * endRatio;
+  const height = Math.max(18, Math.min(blockRect.height, blockRect.height - 16));
+
+  return new DOMRect(
+    left,
+    blockRect.top - articleRect.top + Math.max(4, (blockRect.height - height) / 2),
+    Math.max(4, right - left),
+    height
+  );
 }
 
 function caretRectAtSourceOffset(
@@ -985,11 +1089,62 @@ function caretRectInBlockBySourceRatio(
   );
 }
 
+function textRangeRectsAtTextOffsets(
+  root: HTMLElement,
+  startOffset: number,
+  endOffset: number,
+  coordinateRoot = root
+): DOMRect[] {
+  if (endOffset <= startOffset) {
+    return [];
+  }
+
+  const start = textPositionAtOffset(root, startOffset);
+  const end = textPositionAtOffset(root, endOffset);
+  if (!start || !end) {
+    return [];
+  }
+
+  const range = document.createRange();
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
+  const coordinateRect = coordinateRoot.getBoundingClientRect();
+  const rects = [...range.getClientRects()]
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .map(
+      (rect) =>
+        new DOMRect(
+          rect.left - coordinateRect.left,
+          rect.top - coordinateRect.top,
+          rect.width,
+          Math.max(4, rect.height)
+        )
+    );
+  range.detach();
+  return rects;
+}
+
 function caretRectAtTextOffset(
   root: HTMLElement,
   targetOffset: number,
   coordinateRoot = root
 ): DOMRect | null {
+  const position = textPositionAtOffset(root, targetOffset);
+  if (position) {
+    return textNodeCaretRect(position.node, position.offset, coordinateRoot);
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  const coordinateRect = coordinateRoot.getBoundingClientRect();
+  return new DOMRect(
+    rootRect.left - coordinateRect.left,
+    rootRect.top - coordinateRect.top,
+    2,
+    Math.max(18, rootRect.height)
+  );
+}
+
+function textPositionAtOffset(root: HTMLElement, targetOffset: number): { node: Text; offset: number } | null {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       return node.parentElement?.closest(".remote-cursor-layer,[aria-hidden='true']")
@@ -1002,15 +1157,15 @@ function caretRectAtTextOffset(
   let current = walker.nextNode();
 
   while (current) {
-    lastTextNode = current as Text;
+    const textNode = current as Text;
+    lastTextNode = textNode;
     const text = current.textContent ?? "";
     const nextOffset = offset + text.length;
     if (targetOffset <= nextOffset) {
-      return textNodeCaretRect(
-        current as Text,
-        Math.max(0, Math.min(text.length, targetOffset - offset)),
-        coordinateRoot
-      );
+      return {
+        node: textNode,
+        offset: Math.max(0, Math.min(text.length, targetOffset - offset))
+      };
     }
 
     offset = nextOffset;
@@ -1018,17 +1173,13 @@ function caretRectAtTextOffset(
   }
 
   if (lastTextNode) {
-    return textNodeCaretRect(lastTextNode, lastTextNode.textContent?.length ?? 0, coordinateRoot);
+    return {
+      node: lastTextNode,
+      offset: lastTextNode.textContent?.length ?? 0
+    };
   }
 
-  const rootRect = root.getBoundingClientRect();
-  const coordinateRect = coordinateRoot.getBoundingClientRect();
-  return new DOMRect(
-    rootRect.left - coordinateRect.left,
-    rootRect.top - coordinateRect.top,
-    2,
-    Math.max(18, rootRect.height)
-  );
+  return null;
 }
 
 function textNodeCaretRect(node: Text, offset: number, coordinateRoot: HTMLElement): DOMRect | null {
