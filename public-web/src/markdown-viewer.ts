@@ -259,6 +259,7 @@ function renderBlocks(
       }
       const blank = document.createElement("div");
       blank.className = "markdown-blank-lines";
+      blank.dataset.blankLines = String(index - blankStart);
       blank.style.setProperty("--blank-lines", String(index - blankStart));
       blank.setAttribute("aria-hidden", "true");
       tagSource(blank, source, blankStart, index, "blank");
@@ -1115,7 +1116,11 @@ function selectionRectsAtSourceRange(
       return [];
     }
 
-    if (block.dataset.sourceKind === "math" || block.dataset.sourceKind === "blank") {
+    if (block.dataset.sourceKind === "blank") {
+      return selectionRectsInBlankBlock(article, block, blockStart, blockEnd, rangeStart, rangeEnd);
+    }
+
+    if (block.dataset.sourceKind === "math") {
       const rect = selectionRectInMathBlock(article, block, blockStart, blockEnd, rangeStart, rangeEnd);
       return rect ? [rect] : [];
     }
@@ -1199,7 +1204,11 @@ function caretRectAtSourceOffset(
   const sourceEnd = Math.max(sourceStart, Number(block.dataset.sourceEnd ?? sourceStart));
   const clampedOffset = Math.max(sourceStart, Math.min(sourceOffset, sourceEnd));
 
-  if (block.dataset.sourceKind === "math" || block.dataset.sourceKind === "blank") {
+  if (block.dataset.sourceKind === "blank") {
+    return caretRectInBlankBlock(article, block, sourceStart, sourceEnd, clampedOffset);
+  }
+
+  if (block.dataset.sourceKind === "math") {
     return caretRectInBlockBySourceRatio(article, block, sourceStart, sourceEnd, clampedOffset);
   }
 
@@ -1217,6 +1226,12 @@ function findSourceBlock(article: HTMLElement, sourceOffset: number): HTMLElemen
   });
 
   return matches.sort((left, right) => {
+    const leftStartsAtOffset = Number(left.dataset.sourceStart) === sourceOffset ? 0 : 1;
+    const rightStartsAtOffset = Number(right.dataset.sourceStart) === sourceOffset ? 0 : 1;
+    if (leftStartsAtOffset !== rightStartsAtOffset) {
+      return leftStartsAtOffset - rightStartsAtOffset;
+    }
+
     const leftSpan = Number(left.dataset.sourceEnd) - Number(left.dataset.sourceStart);
     const rightSpan = Number(right.dataset.sourceEnd) - Number(right.dataset.sourceStart);
     if (leftSpan !== rightSpan) {
@@ -1224,6 +1239,79 @@ function findSourceBlock(article: HTMLElement, sourceOffset: number): HTMLElemen
     }
     return left.contains(right) ? 1 : -1;
   })[0] ?? null;
+}
+
+function selectionRectsInBlankBlock(
+  article: HTMLElement,
+  block: HTMLElement,
+  blockStart: number,
+  blockEnd: number,
+  selectionStart: number,
+  selectionEnd: number
+): DOMRect[] {
+  const blockRect = block.getBoundingClientRect();
+  if (blockRect.width === 0 && blockRect.height === 0) {
+    return [];
+  }
+
+  const articleRect = article.getBoundingClientRect();
+  const lineCount = blankLineCount(block);
+  const lineHeight = blockRect.height / lineCount;
+  const firstLine = blankLineIndex(blockStart, blockEnd, selectionStart, lineCount);
+  const lastLine = blankLineIndex(blockStart, blockEnd, Math.max(selectionStart, selectionEnd - 1), lineCount);
+  const rects: DOMRect[] = [];
+  for (let line = firstLine; line <= lastLine; line++) {
+    rects.push(
+      new DOMRect(
+        blockRect.left - articleRect.left,
+        blockRect.top - articleRect.top + line * lineHeight,
+        Math.max(4, blockRect.width),
+        Math.max(18, lineHeight)
+      )
+    );
+  }
+  return rects;
+}
+
+function caretRectInBlankBlock(
+  article: HTMLElement,
+  block: HTMLElement,
+  blockStart: number,
+  blockEnd: number,
+  sourceOffset: number
+): DOMRect | null {
+  const blockRect = block.getBoundingClientRect();
+  if (blockRect.width === 0 && blockRect.height === 0) {
+    return null;
+  }
+
+  const articleRect = article.getBoundingClientRect();
+  const lineCount = blankLineCount(block);
+  const lineHeight = blockRect.height / lineCount;
+  const lineIndex = blankLineIndex(blockStart, blockEnd, sourceOffset, lineCount);
+  const height = Math.max(18, Math.min(lineHeight, lineHeight * 0.92));
+  return new DOMRect(
+    blockRect.left - articleRect.left,
+    blockRect.top - articleRect.top + lineIndex * lineHeight + Math.max(0, (lineHeight - height) / 2),
+    2,
+    height
+  );
+}
+
+function blankLineCount(block: HTMLElement): number {
+  const parsed = Number.parseInt(block.dataset.blankLines ?? "1", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function blankLineIndex(
+  blockStart: number,
+  blockEnd: number,
+  sourceOffset: number,
+  lineCount: number
+): number {
+  const span = Math.max(1, blockEnd - blockStart);
+  const relative = Math.max(0, Math.min(sourceOffset - blockStart, span - 1));
+  return Math.max(0, Math.min(lineCount - 1, Math.floor(relative)));
 }
 
 function caretRectInBlockBySourceRatio(
